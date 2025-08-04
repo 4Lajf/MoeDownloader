@@ -1,0 +1,1 @@
+If during Continous numeration test results you could not find an anime for example "No AniList results found for "Watashi ga Koibito ni Nareru Wake Nai jan, Muri Muri!"" remove one word than query again, than wait 2 seconds and remove one word and query again till you have a match

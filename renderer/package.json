@@ -1,0 +1,42 @@
+{
+	"name": "renderer",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"format": "prettier --write .",
+		"build": "vite build --emptyOutDir",
+		"preview": "vite preview",
+		"check": "svelte-check --tsconfig ./tsconfig.json",
+		"lint": "prettier --check ."
+	},
+	"devDependencies": {
+		"@internationalized/date": "^3.8.2",
+		"@lucide/svelte": "^0.515.0",
+		"@sveltejs/vite-plugin-svelte": "^4.0.0",
+		"@tailwindcss/typography": "^0.5.15",
+		"@tailwindcss/vite": "^4.0.0",
+		"@tsconfig/svelte": "^5.0.2",
+		"bits-ui": "^2.9.0",
+		"clsx": "^2.1.1",
+		"mode-watcher": "^1.1.0",
+		"prettier": "^3.4.2",
+		"prettier-plugin-svelte": "^3.3.3",
+		"prettier-plugin-tailwindcss": "^0.6.11",
+		"svelte": "^5.0.0",
+		"svelte-check": "^4.0.0",
+		"svelte-sonner": "^1.0.5",
+		"tailwind-merge": "^3.3.1",
+		"tailwind-variants": "^1.0.0",
+		"tailwindcss": "^4.0.0",
+		"tslib": "^2.6.2",
+		"tw-animate-css": "^1.3.6",
+		"typescript": "^5.5.0",
+		"vite": "^5.4.4",
+		"vite-plugin-devtools-json": "^0.2.0"
+	},
+	"dependencies": {
+		"lucide-svelte": "^0.535.0"
+	}
+}
