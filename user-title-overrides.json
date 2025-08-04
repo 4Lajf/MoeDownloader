@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "last_updated": "2025-01-04T12:00:00Z",
+  "description": "User-specific title overrides for MoeDownloader - these take priority over global overrides",
+  "overrides": {
+    // Direct string-to-string title replacements (user-specific, highest priority)
+    "exact_match": {
+      // Add your custom title overrides here
+      // Example: "My Custom Title S2": "My Custom Title Season 2"
+    },
+
+    // Episode mapping rules using proper JSON format (user-specific)
+    "episode_mappings": [
+      // Add your custom episode mappings here
+      // Example:
+      // {
+      //   "source_title": "My Anime Title",
+      //   "source_episode_start": 13,
+      //   "source_episode_end": 24,
+      //   "dest_title": "My Anime Title Season 2",
+      //   "dest_episode_start": 1,
+      //   "dest_episode_end": 12,
+      //   "description": "Map episodes 13-24 to Season 2 episodes 1-12"
+      // }
+    ]
+  },
+  "metadata": {
+    "notes": [
+      "This file contains user-specific overrides that take priority over global overrides",
+      "Only exact_match and episode_mappings are supported for user overrides",
+      "Changes to this file take effect immediately without needing to restart the application",
+      "This file is not synced with GitHub - it's local to your installation"
+    ]
+  }
+}

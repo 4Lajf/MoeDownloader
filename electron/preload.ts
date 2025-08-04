@@ -281,6 +281,19 @@ export const CONTEXT_BRIDGE = {
     return await ipcRenderer.invoke('parse-multiple-filenames', filenames);
   },
 
+  // Title overrides operations
+  getUserTitleOverrides: async (): Promise<any> => {
+    return await ipcRenderer.invoke('get-user-title-overrides');
+  },
+
+  saveUserTitleOverrides: async (overrides: any): Promise<void> => {
+    return await ipcRenderer.invoke('save-user-title-overrides', overrides);
+  },
+
+  refreshTitleOverrides: async (): Promise<void> => {
+    return await ipcRenderer.invoke('refresh-title-overrides');
+  },
+
   // Notification listener
   onAppNotification: (callback: (notification: any) => void): void => {
     ipcRenderer.on('app-notification', (_, notification) => {

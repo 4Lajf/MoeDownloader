@@ -531,6 +531,47 @@ ipcMain.handle("parse-multiple-filenames", (_, filenames) => {
   }
 });
 
+// Title overrides operations
+const { createTitleOverridesManager } = require('./services/title-overrides');
+const titleOverridesManager = createTitleOverridesManager();
+
+ipcMain.handle("get-user-title-overrides", async () => {
+  try {
+    return titleOverridesManager.getUserOverridesData();
+  } catch (error) {
+    console.error('Failed to get user title overrides:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle("save-user-title-overrides", async (_, overrides) => {
+  try {
+    const fs = require('fs');
+    const USER_OVERRIDES_FILE = 'user-title-overrides.json';
+
+    // Write the overrides to the user file
+    fs.writeFileSync(USER_OVERRIDES_FILE, JSON.stringify(overrides, null, 2), 'utf8');
+
+    // Reload user overrides in the manager
+    await titleOverridesManager.loadUserOverrides();
+
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to save user title overrides:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle("refresh-title-overrides", async () => {
+  try {
+    await titleOverridesManager.forceRefresh();
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to refresh title overrides:', error);
+    throw error;
+  }
+});
+
 // App cleanup handlers
 app.on('before-quit', () => {
   console.log('🧹 Cleaning up services before quit...');

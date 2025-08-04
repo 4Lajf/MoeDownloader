@@ -6,10 +6,12 @@ const {
 } = require("../lib/database");
 const { createRSSProcessor } = require("./rss-processor");
 const { createDownloadManager } = require("./download-manager");
+const { createTitleOverridesManager } = require("./title-overrides");
 
 function createAppService() {
   let rssProcessor = null;
   let downloadManager = null;
+  let titleOverridesManager = null;
   let rssScheduleActive = false;
   let rssInterval = null;
 
@@ -19,6 +21,10 @@ function createAppService() {
         // Initialize RSS processor and download manager
         rssProcessor = createRSSProcessor();
         downloadManager = createDownloadManager();
+
+        // Initialize title overrides manager
+        titleOverridesManager = createTitleOverridesManager();
+        await titleOverridesManager.initialize();
 
         console.log('App service initialized successfully');
         return { success: true };

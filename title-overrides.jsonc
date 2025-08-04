@@ -1,0 +1,85 @@
+{
+  "overrides": {
+    // Direct string-to-string title replacements (highest priority after AniList-specific)
+    "exact_match": {
+      "Grand Blue S2": "Grand Blue Season 2",
+      "Kimetsu no Yaiba S3": "Kimetsu no Yaiba: Hashira Training Arc",
+      "Attack on Titan Final Season Part 3": "Attack on Titan: The Final Season - Final Arc",
+      "Demon Slayer S3": "Demon Slayer: Hashira Training Arc",
+      "Dr. Stone S3": "Dr. Stone: New World",
+      "Mob Psycho 100 S3": "Mob Psycho 100 III",
+      "One Piece Film Red": "One Piece: Film Red",
+      "Spy x Family S2": "Spy x Family Season 2"
+    },
+
+    // Episode mapping rules using proper JSON format
+    "episode_mappings": [
+      // {
+      //   "source_title": "Grand Blue",
+      //   "source_episode_start": 14,
+      //   "source_episode_end": 25,
+      //   "dest_title": "Grand Blue Season 2",
+      //   "dest_episode_start": 1,
+      //   "dest_episode_end": 12,
+      //   "description": "Map Grand Blue episodes 14-25 to Season 2 episodes 1-12"
+      // }
+    ]
+    // Regex-based transformations for systematic title changes (currently disabled)
+    // "pattern_match": [
+    //   {
+    //     "pattern": "^(.+?)\\s+S(\\d+)$",
+    //     "replacement": "$1 Season $2",
+    //     "description": "Convert 'Title S2' format to 'Title Season 2'",
+    //     "examples": ["Title S2 -> Title Season 2", "Anime S3 -> Anime Season 3"]
+    //   }
+    // ],
+    // Overrides based on AniList ID for precise matching (currently disabled)
+    // "anilist_specific": {
+    //   "21827": {
+    //     "override_title": "Grand Blue Season 2",
+    //     "reason": "AniList uses different season naming"
+    //   },
+    //   "98659": {
+    //     "override_title": "Attack on Titan: The Final Season",
+    //     "reason": "Standardize final season naming"
+    //   },
+    //   "127230": {
+    //     "override_title": "Demon Slayer: Hashira Training Arc",
+    //     "reason": "AniList specific arc naming"
+    //   }
+    // },
+    // Different overrides per release group (currently disabled)
+    // "group_specific": {
+    //   "SubsPlease": {
+    //     "Grand Blue S2": "Grand Blue Season 2",
+    //     "Demon Slayer S3": "Demon Slayer: Hashira Training Arc"
+    //   },
+    //   "Erai-raws": {
+    //     "One Piece Film Red": "One Piece: Film Red"
+    //   }
+    // },
+    // Generic fallback patterns (currently disabled)
+    // "fallback_patterns": [
+    //   {
+    //     "pattern": "\\b(S)(\\d+)\\b",
+    //     "replacement": "Season $2",
+    //     "description": "Generic S# to Season # conversion",
+    //     "priority": 1
+    //   },
+    //   {
+    //     "pattern": "\\b(Part)(\\s+)(\\d+)\\b",
+    //     "replacement": ": Part $3",
+    //     "description": "Generic Part # formatting",
+    //     "priority": 2
+    //   }
+    // ]
+  },
+  "metadata": {
+    "notes": [
+      "Exact matches take highest priority",
+      "Pattern matches are applied in order",
+      "AniList-specific overrides are used when AniList ID is known",
+      "Group-specific overrides are applied based on release group detection"
+    ]
+  }
+}

@@ -42,6 +42,13 @@ import ProgressBar from 'progress';
 import { parseStringPromise } from 'xml2js';
 // @ts-ignore
 import * as cp from 'child_process';
+import {
+  initializeTitleOverrides,
+  applyTitleOverrides,
+  applyEpisodeMappings,
+  applyEpisodeOverrides,
+  extractReleaseGroup
+} from './lib/title-overrides-wrapper.js';
 
 const FEED_URL = 'https://nyaa.si/?page=rss&c=1_2&f=0';
 const MAX_ATTEMPTS = 3;
@@ -121,18 +128,31 @@ const COLORS = {
 /**
  * Schedule the script to run every MINUTES_SCHEDULE minutes
  */
-cron.schedule(`*/${MINUTES_SCHEDULE} * * * *`, init);
+cron.schedule(`*/${MINUTES_SCHEDULE} * * * *`, async () => {
+  try {
+    await init();
+  } catch (error) {
+    console.error(`${COLORS.RED}[ERROR] Scheduled init failed: ${error.message}${COLORS.RESET}`);
+  }
+});
 console.info(
   `${COLORS.GRAY}[INFO] RSS downloader script started. Checking for updates every ${MINUTES_SCHEDULE} minutes.${COLORS.RESET}`
 );
 
-init();
+// Initial run
+(async () => {
+  try {
+    await init();
+  } catch (error) {
+    console.error(`${COLORS.RED}[ERROR] Initial init failed: ${error.message}${COLORS.RESET}`);
+  }
+})();
 
 /**
  * Initialize the script
- * @returns {void}
+ * @returns {Promise<void>}
  */
-function init() {
+async function init() {
   if (isScriptAlreadyRunning()) {
     console.info(
       `${COLORS.GRAY}[INFO] Another instance of the script is already running. Skipping this run.${COLORS.RESET}`
@@ -140,12 +160,22 @@ function init() {
     return;
   }
 
+  // Initialize title overrides system
+  try {
+    console.info(`${COLORS.CYAN}[INFO] Initializing title overrides system...${COLORS.RESET}`);
+    await initializeTitleOverrides();
+    console.info(`${COLORS.GREEN}[INFO] Title overrides system initialized successfully.${COLORS.RESET}`);
+  } catch (error) {
+    console.error(`${COLORS.RED}[ERROR] Failed to initialize title overrides system: ${error.message}${COLORS.RESET}`);
+    console.info(`${COLORS.YELLOW}[INFO] Continuing without title overrides...${COLORS.RESET}`);
+  }
+
   // If a torrent link was provided, download it directly.
   // Otherwise, process the RSS feed.
   if (providedLink) {
     downloadTorrentFromCLI(providedLink);
   } else {
-    processFeed();
+    await processFeed();
   }
 }
 
@@ -263,7 +293,8 @@ function processNextDownload() {
   downloadTorrent(torrentLink, torrentTitle, finalTitle);
 }
 
-function fixTitle(title) {
+function fixTitle(title, originalFullTitle = '') {
+  // Legacy title fixes (kept for backward compatibility)
   const titleMap = {
     'NieR-Automata Ver1_1a Part 2': 'NieR_Automata Ver1.1a Part 2',
     '2-5 Jigen no Ririsa': '2.5-Jigen no Ririsa',
@@ -272,7 +303,25 @@ function fixTitle(title) {
     Vden: 'VTuber Nandaga Haishin Kiri Wasuretara Densetsu ni Natteta',
   };
 
-  return titleMap[title];
+  // First apply legacy fixes
+  let fixedTitle = titleMap[title] || title;
+
+  // Then apply title overrides system
+  try {
+    const releaseGroup = extractReleaseGroup(originalFullTitle);
+    const overriddenTitle = applyTitleOverrides(fixedTitle, {
+      releaseGroup: releaseGroup || undefined
+    });
+
+    if (overriddenTitle !== fixedTitle) {
+      console.info(`${COLORS.CYAN}[INFO] Title override applied: "${fixedTitle}" -> "${overriddenTitle}"${COLORS.RESET}`);
+      return overriddenTitle;
+    }
+  } catch (error) {
+    console.error(`${COLORS.RED}[ERROR] Title override failed for "${fixedTitle}": ${error.message}${COLORS.RESET}`);
+  }
+
+  return fixedTitle;
 }
 
 /**
@@ -323,7 +372,7 @@ function downloadTorrent(torrentLink, torrentTitle, finalTitle) {
               .replace('[Erai-raws] ', '')
               .replace('[SubsPlease] ', '')
               .replace('[New-raws] ', '');
-            let fixedTitle = fixTitle(animeTitle);
+            let fixedTitle = fixTitle(animeTitle, oldFilename);
             if (fixedTitle) {
               newFilename = oldFilename.replace(animeTitle, fixedTitle);
             }
@@ -511,9 +560,14 @@ async function processFeed() {
 
     // Apply title fixes for Erai-raws titles
     if (!isToonsHub && titleMatch && episodeNumberMatch) {
-      let fixedTitle = fixTitle(titleMatch[1]);
+      let fixedTitle = fixTitle(titleMatch[1], item.title[0]);
       if (fixedTitle) {
-        finalTitle = `${fixedTitle} - ${episodeNumberMatch[1]}`;
+        // Apply episode mappings if available (can change both title and episode)
+        const originalEpisode = parseInt(episodeNumberMatch[1], 10);
+        const mappingResult = applyEpisodeMappings(fixedTitle, originalEpisode);
+        const finalEpisodeStr = mappingResult.transformedEpisode.toString().padStart(2, '0');
+
+        finalTitle = `${mappingResult.transformedTitle} - ${finalEpisodeStr}`;
       }
     }
     // Note: Title will be added to processed list only after download completes
@@ -662,9 +716,19 @@ async function handleTitleProcessing(item, fullTitle, finalTitle, processedTitle
   markScriptAsRunning();
 
   let [title, episodeNumber] = extractTitleAndEpisode(finalTitle, fullTitle);
-  let fixedTitle = fixTitle(title);
+  let fixedTitle = fixTitle(title, fullTitle);
   if (fixedTitle) {
     title = fixedTitle;
+
+    // Apply episode mappings if available (can change both title and episode)
+    const originalEpisode = parseInt(episodeNumber, 10);
+    const mappingResult = applyEpisodeMappings(title, originalEpisode);
+
+    if (mappingResult.transformedTitle !== title || mappingResult.transformedEpisode !== originalEpisode) {
+      title = mappingResult.transformedTitle;
+      episodeNumber = mappingResult.transformedEpisode.toString().padStart(2, '0');
+      console.info(`${COLORS.CYAN}[INFO] Episode mapping applied: "${fixedTitle}" episode ${originalEpisode} -> "${title}" episode ${mappingResult.transformedEpisode}${COLORS.RESET}`);
+    }
   }
   console.info(`${COLORS.CYAN}[INFO] ${finalTitle.trim()} "${fullTitle.trim()}"${COLORS.RESET}`);
 

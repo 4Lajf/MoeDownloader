@@ -10,7 +10,8 @@
 		Play,
 		Pause,
 		ExternalLink,
-		Database
+		Database,
+		FileText
 	} from 'lucide-svelte';
 	import { toast } from 'svelte-sonner';
 	import ipc from '../../ipc';
@@ -100,6 +101,15 @@
 			>
 				<Database class="w-4 h-4 mr-2" />
 				Database
+			</Button>
+
+			<Button
+				variant={currentPage === 'title-overrides' ? 'default' : 'ghost'}
+				class="w-full justify-start"
+				onclick={() => navigateTo('title-overrides')}
+			>
+				<FileText class="w-4 h-4 mr-2" />
+				Title Overrides
 			</Button>
 
 			<Button
