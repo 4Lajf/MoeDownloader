@@ -132,6 +132,10 @@ export const CONTEXT_BRIDGE = {
     return await ipcRenderer.invoke('test-rss-continuous-numeration', url);
   },
 
+  testRSSDownload: async (url: string, options?: any): Promise<any> => {
+    return await ipcRenderer.invoke('test-rss-download', url, options);
+  },
+
   // AniList operations
   anilistGetAuthUrl: async (): Promise<string> => {
     return await ipcRenderer.invoke('anilist-get-auth-url');

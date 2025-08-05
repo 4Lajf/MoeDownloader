@@ -7,7 +7,7 @@
 
 	import { Switch } from '$lib/components/ui/switch';
 	import * as Collapsible from '$lib/components/ui/collapsible';
-	import { Save, Folder, RefreshCw, ChevronDown, ChevronRight, TestTube } from 'lucide-svelte';
+	import { Save, Folder, RefreshCw, ChevronDown, ChevronRight, TestTube, Download } from 'lucide-svelte';
 	import { toast } from 'svelte-sonner';
 	import ipc from '../../ipc';
 
@@ -264,6 +264,78 @@
 			return [];
 		}
 	}
+
+	// Test RSS Download functionality
+	let testDownloadResults = $state<any[]>([]);
+	let showDownloadResults = $state(false);
+	let downloadTestInProgress = $state(false);
+	let testDownloadOptions = $state({
+		maxItems: 5,
+		ignoreProcessedFiles: false,
+		sendNotifications: false
+	});
+
+	async function testRSSDownload() {
+		if (!testRssUrl.trim()) {
+			toast.error('Invalid RSS URL', {
+				description: 'Please enter a valid RSS feed URL.',
+				duration: 3000
+			});
+			return;
+		}
+
+		try {
+			downloadTestInProgress = true;
+			showDownloadResults = false;
+			testDownloadResults = [];
+
+			toast.loading('Testing RSS download...', {
+				description: 'Processing RSS feed and attempting downloads.',
+				duration: 15000
+			});
+
+			// Create a plain object to avoid cloning issues
+			const options = {
+				maxItems: testDownloadOptions.maxItems,
+				ignoreProcessedFiles: testDownloadOptions.ignoreProcessedFiles,
+				sendNotifications: testDownloadOptions.sendNotifications
+			};
+
+			const result = await ipc.testRSSDownload(testRssUrl, options);
+
+			toast.dismiss();
+
+			if (result.success) {
+				const summary = result.summary;
+
+				// Store results for UI display
+				testDownloadResults = result.results || [];
+				showDownloadResults = true;
+
+				toast.success('RSS download test completed', {
+					description: `Processed ${summary.processedItems} items. ${summary.downloadedCount} downloads queued, ${summary.noMatches} no matches, ${summary.alreadyProcessed} already processed.`,
+					duration: 8000
+				});
+
+				// Log detailed results to console for debugging
+				console.log('🧪 RSS Download Test Results:', JSON.stringify(result, null, 2));
+			} else {
+				toast.error('RSS download test failed', {
+					description: `Test failed: ${result.error}`,
+					duration: 5000
+				});
+			}
+		} catch (error: any) {
+			console.error('Error testing RSS download:', error);
+			toast.dismiss();
+			toast.error('RSS download test failed', {
+				description: `Test failed: ${error?.message || 'Unknown error'}`,
+				duration: 5000
+			});
+		} finally {
+			downloadTestInProgress = false;
+		}
+	}
 </script>
 
 <div class="p-6">
@@ -286,7 +358,7 @@
 				</CardHeader>
 				<CardContent class="space-y-4">
 					<div>
-						<Label for="downloadPath">Download Directory</Label>
+						<Label for="downloadPath" class="py-2">Download Directory</Label>
 						<div class="flex gap-2">
 							<Input 
 								id="downloadPath" 
@@ -301,7 +373,7 @@
 					</div>
 
 					<div>
-						<Label for="maxDownloads">Max Concurrent Downloads</Label>
+						<Label for="maxDownloads" class="py-2">Max Concurrent Downloads</Label>
 						<Input
 							id="maxDownloads"
 							type="number"
@@ -340,7 +412,7 @@
 				</CardHeader>
 				<CardContent class="space-y-4">
 					<div>
-						<Label for="rssUrl">RSS Feed URL</Label>
+						<Label for="rssUrl" class="py-2">RSS Feed URL</Label>
 						<div class="flex gap-2">
 							<Input
 								id="rssUrl"
@@ -356,7 +428,7 @@
 					</div>
 
 					<div>
-						<Label for="checkInterval">Check Interval (minutes)</Label>
+						<Label for="checkInterval" class="py-2">Check Interval (minutes)</Label>
 						<Input
 							id="checkInterval"
 							type="number"
@@ -376,7 +448,7 @@
 						<Label>Testing & Debugging</Label>
 						<div class="space-y-2 mt-2">
 							<div>
-								<Label for="testRssUrl">Test RSS URL</Label>
+								<Label for="testRssUrl" class="py-2">Test RSS URL</Label>
 								<Input
 									id="testRssUrl"
 									bind:value={testRssUrl}
@@ -384,19 +456,65 @@
 									type="url"
 								/>
 							</div>
-							<Button variant="outline" onclick={testContinuousNumeration} class="w-full" disabled={testInProgress}>
-								{#if testInProgress}
-									<RefreshCw class="w-4 h-4 mr-2 animate-spin" />
-									Testing...
-								{:else}
-									<TestTube class="w-4 h-4 mr-2" />
-									Test Continuous Numeration
-								{/if}
-							</Button>
+							<div class="grid grid-cols-2 gap-2">
+								<Button variant="outline" onclick={testContinuousNumeration} disabled={testInProgress || downloadTestInProgress}>
+									{#if testInProgress}
+										<RefreshCw class="w-4 h-4 mr-2 animate-spin" />
+										Testing...
+									{:else}
+										<TestTube class="w-4 h-4 mr-2" />
+										Test Parsing
+									{/if}
+								</Button>
+								<Button variant="outline" onclick={testRSSDownload} disabled={testInProgress || downloadTestInProgress}>
+									{#if downloadTestInProgress}
+										<RefreshCw class="w-4 h-4 mr-2 animate-spin" />
+										Testing...
+									{:else}
+										<Download class="w-4 h-4 mr-2" />
+										Test Download
+									{/if}
+								</Button>
+							</div>
+
+							<!-- Test Download Options -->
+							<div class="border-t pt-3 mt-3">
+								<Label class="text-sm font-medium">Download Test Options</Label>
+								<div class="grid grid-cols-2 gap-4 mt-2">
+									<div>
+										<Label for="maxItems" class="text-xs">Max Items to Process</Label>
+										<Input
+											id="maxItems"
+											type="number"
+											bind:value={testDownloadOptions.maxItems}
+											min="1"
+											max="50"
+											class="text-xs"
+										/>
+									</div>
+									<div class="space-y-2">
+										<div class="flex items-center space-x-2">
+											<Switch
+												id="ignoreProcessed"
+												bind:checked={testDownloadOptions.ignoreProcessedFiles}
+											/>
+											<Label for="ignoreProcessed" class="text-xs">Ignore Already Processed</Label>
+										</div>
+										<div class="flex items-center space-x-2">
+											<Switch
+												id="sendNotifications"
+												bind:checked={testDownloadOptions.sendNotifications}
+											/>
+											<Label for="sendNotifications" class="text-xs">Send Notifications</Label>
+										</div>
+									</div>
+								</div>
+							</div>
 						</div>
-						<p class="text-sm text-muted-foreground mt-1">
-							Test episode numbering resolution using a custom RSS feed URL
-						</p>
+						<div class="space-y-1 text-sm text-muted-foreground">
+							<p><strong>Test Parsing:</strong> Test episode numbering resolution using a custom RSS feed URL</p>
+							<p><strong>Test Download:</strong> Actually process RSS feed and queue downloads (uses real whitelist and database)</p>
+						</div>
 					</div>
 				</CardContent>
 			</Card>
@@ -439,6 +557,48 @@
 										</div>
 									{/if}
 
+									<!-- Show title overrides results -->
+									{#if result.titleOverridesResult}
+										<div class="bg-blue-50 border border-blue-300 rounded p-3">
+											<div class="font-medium text-blue-800 text-sm mb-2">🎯 Title Overrides System</div>
+											{#if result.titleOverridesResult.error}
+												<p class="text-sm text-red-600">Error: {result.titleOverridesResult.error}</p>
+											{:else}
+												<div class="space-y-2 text-sm">
+													<!-- Title Override -->
+													{#if result.titleOverridesResult.titleChanged}
+														<div class="space-y-1">
+															<div class="font-medium text-blue-700">Title Override Applied:</div>
+															<div class="font-mono text-xs">
+																<span class="text-red-600">Original:</span> {result.titleOverridesResult.originalTitle}
+															</div>
+															<div class="font-mono text-xs">
+																<span class="text-green-600">Override:</span> {result.titleOverridesResult.overriddenTitle}
+															</div>
+														</div>
+													{:else}
+														<div class="text-xs text-muted-foreground">No title override applied</div>
+													{/if}
+
+													<!-- Episode Mapping -->
+													{#if result.titleOverridesResult.episodeMapping && result.titleOverridesResult.episodeChanged}
+														<div class="space-y-1">
+															<div class="font-medium text-blue-700">Episode Mapping Applied:</div>
+															<div class="font-mono text-xs">
+																<span class="text-red-600">Original:</span> {result.titleOverridesResult.overriddenTitle} - Episode {result.parsedData?.episodeNumber || 'N/A'}
+															</div>
+															<div class="font-mono text-xs">
+																<span class="text-green-600">Mapped:</span> {result.titleOverridesResult.episodeMapping.transformedTitle} - Episode {result.titleOverridesResult.episodeMapping.transformedEpisode}
+															</div>
+														</div>
+													{:else if result.titleOverridesResult.episodeMapping}
+														<div class="text-xs text-muted-foreground">No episode mapping applied</div>
+													{/if}
+												</div>
+											{/if}
+										</div>
+									{/if}
+
 									{#if result.parsedData}
 										<div class="space-y-3">
 											<!-- Basic Information -->
@@ -447,21 +607,27 @@
 												<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 text-xs">
 													<div class="space-y-1">
 														<span class="font-medium text-muted-foreground">Anime Title:</span>
-														<div class="font-mono p-1 rounded text-xs {result.parsedData.episodeMappingApplied ? 'bg-green-100 border border-green-300' : 'bg-muted'}">
+														<div class="font-mono p-1 rounded text-xs {result.parsedData.titleOverrideApplied || result.parsedData.episodeMappingApplied ? 'bg-blue-100 border border-blue-300' : 'bg-muted'}">
 															{result.parsedData.animeTitle || 'N/A'}
-															{#if result.parsedData.episodeMappingApplied && result.parsedData.originalAnimeTitle}
-																<div class="text-green-700 font-medium text-xs mt-1">
-																	Mapped from: "{result.parsedData.originalAnimeTitle}"
+															{#if (result.parsedData.titleOverrideApplied || result.parsedData.episodeMappingApplied) && result.parsedData.originalAnimeTitle}
+																<div class="text-blue-700 font-medium text-xs mt-1">
+																	{#if result.parsedData.titleOverrideApplied && result.parsedData.episodeMappingApplied}
+																		Override + Mapping from: "{result.parsedData.originalAnimeTitle}"
+																	{:else if result.parsedData.titleOverrideApplied}
+																		Override from: "{result.parsedData.originalAnimeTitle}"
+																	{:else}
+																		Mapped from: "{result.parsedData.originalAnimeTitle}"
+																	{/if}
 																</div>
 															{/if}
 														</div>
 													</div>
 													<div class="space-y-1">
 														<span class="font-medium text-muted-foreground">Episode:</span>
-														<div class="font-mono p-1 rounded text-xs {result.parsedData.episodeMappingApplied ? 'bg-green-100 border border-green-300' : 'bg-muted'}">
+														<div class="font-mono p-1 rounded text-xs {result.parsedData.episodeMappingApplied ? 'bg-blue-100 border border-blue-300' : 'bg-muted'}">
 															{result.parsedData.episodeNumber || 'N/A'}
-															{#if result.parsedData.episodeMappingApplied}
-																<span class="text-green-700 font-medium"> (mapped from {result.parsedData.originalEpisodeNumber})</span>
+															{#if result.parsedData.episodeMappingApplied && result.parsedData.originalEpisodeNumber}
+																<span class="text-blue-700 font-medium"> (mapped from {result.parsedData.originalEpisodeNumber})</span>
 															{/if}
 														</div>
 													</div>
@@ -730,6 +896,155 @@
 				</Card>
 			{/if}
 
+			<!-- Download Test Results -->
+			{#if showDownloadResults && testDownloadResults.length > 0}
+				<Card>
+					<CardHeader>
+						<CardTitle>RSS Download Test Results</CardTitle>
+						<CardDescription>
+							Download processing results for {testDownloadResults.length} items from RSS feed
+						</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<div class="space-y-4 max-h-96 overflow-y-auto">
+							{#each testDownloadResults as result, index}
+								<div class="border rounded-lg p-4 space-y-3">
+									<div class="flex items-start justify-between">
+										<div class="space-y-1 flex-1">
+											<h4 class="font-medium text-sm">{result.originalTitle}</h4>
+											<div class="flex items-center gap-2">
+												{#if result.status === 'processed' && result.downloaded}
+													<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+														✅ Downloaded
+													</span>
+												{:else if result.status === 'already_processed'}
+													<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+														⏭️ Already Processed
+													</span>
+												{:else if result.status === 'no_match'}
+													<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+														❌ No Match
+													</span>
+												{:else if result.status === 'error'}
+													<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+														💥 Error
+													</span>
+												{:else if result.status === 'skipped'}
+													<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+														⏭️ Skipped
+													</span>
+												{:else}
+													<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+														🔄 {result.status}
+													</span>
+												{/if}
+											</div>
+											{#if result.error}
+												<p class="text-sm text-red-600">Error: {result.error}</p>
+											{/if}
+											{#if result.reason}
+												<p class="text-sm text-muted-foreground">Reason: {result.reason}</p>
+											{/if}
+										</div>
+										<div class="text-xs text-muted-foreground">#{index + 1}</div>
+									</div>
+
+									<!-- Download Details -->
+									{#if result.downloaded && result.finalTitle}
+										<div class="bg-green-50 border border-green-300 rounded p-3">
+											<div class="font-medium text-green-800 text-sm mb-2">📥 Download Queued</div>
+											<div class="space-y-1 text-sm">
+												<div><span class="font-medium">Final Title:</span> {result.finalTitle}</div>
+												{#if result.downloadId}
+													<div><span class="font-medium">Download ID:</span> {result.downloadId}</div>
+												{/if}
+												{#if result.processedFileId}
+													<div><span class="font-medium">Processed File ID:</span> {result.processedFileId}</div>
+												{/if}
+											</div>
+										</div>
+									{/if}
+
+									<!-- Title Transformation Details -->
+									{#if result.matchResult?.parsedData}
+										<div class="bg-purple-50 border border-purple-300 rounded p-3">
+											<div class="font-medium text-purple-800 text-sm mb-2">🔄 Title Processing</div>
+											<div class="space-y-2 text-sm">
+												<div class="grid grid-cols-2 gap-2 text-xs">
+													<div><span class="font-medium">Original Anime:</span> {result.matchResult.parsedData.originalAnimeTitle || result.matchResult.parsedData.animeTitle}</div>
+													<div><span class="font-medium">Transformed Anime:</span> {result.matchResult.parsedData.animeTitle}</div>
+													<div><span class="font-medium">Episode:</span> {result.matchResult.parsedData.episodeNumber || 'N/A'}</div>
+													<div><span class="font-medium">Release Group:</span> {result.matchResult.parsedData.releaseGroup || 'N/A'}</div>
+													<div><span class="font-medium">Quality:</span> {result.matchResult.parsedData.videoResolution || 'N/A'}</div>
+												</div>
+
+												{#if result.matchResult.parsedData.titleOverrideApplied}
+													<div class="bg-green-100 border border-green-300 rounded p-2 text-xs">
+														<div class="font-medium text-green-800">✅ Title Override Applied</div>
+														<div>"{result.matchResult.parsedData.originalAnimeTitle}" → "{result.matchResult.parsedData.animeTitle}"</div>
+													</div>
+												{/if}
+
+												{#if result.matchResult.parsedData.episodeMappingApplied}
+													<div class="bg-blue-100 border border-blue-300 rounded p-2 text-xs">
+														<div class="font-medium text-blue-800">🔄 Episode Mapping Applied</div>
+														<div>Episode {result.matchResult.parsedData.originalEpisodeNumber} → Episode {result.matchResult.parsedData.episodeNumber}</div>
+													</div>
+												{/if}
+
+												<div class="bg-yellow-100 border border-yellow-300 rounded p-2 text-xs">
+													<div class="font-medium text-yellow-800">🎯 Whitelist Search</div>
+													<div>Looking for whitelist entry: <span class="font-mono font-bold">"{result.matchResult.parsedData.animeTitle}"</span></div>
+												</div>
+											</div>
+										</div>
+									{/if}
+
+									<!-- Whitelist Match Details -->
+									{#if result.matchResult?.entry}
+										<div class="bg-blue-50 border border-blue-300 rounded p-3">
+											<div class="font-medium text-blue-800 text-sm mb-2">🎯 Whitelist Match Found</div>
+											<div class="space-y-1 text-sm">
+												<div><span class="font-medium">Matched Entry:</span> {result.matchResult.entry.title}</div>
+											</div>
+										</div>
+									{:else if result.status === 'no_match' && result.matchResult?.parsedData}
+										<div class="bg-red-50 border border-red-300 rounded p-3">
+											<div class="font-medium text-red-800 text-sm mb-2">❌ No Whitelist Match</div>
+											<div class="space-y-1 text-sm">
+												<div>No whitelist entry found for: <span class="font-mono font-bold">"{result.matchResult.parsedData.animeTitle}"</span></div>
+												<div class="text-xs text-red-600 mt-2">
+													💡 <strong>Tip:</strong> Add a whitelist entry with the title "{result.matchResult.parsedData.animeTitle}" to download this anime.
+												</div>
+											</div>
+										</div>
+									{/if}
+
+									<!-- Technical Details -->
+									<div class="bg-gray-50 border border-gray-200 rounded p-3">
+										<div class="font-medium text-gray-800 text-sm mb-2">🔧 Technical Details</div>
+										<div class="space-y-1 text-xs">
+											{#if result.guid}
+												<div><span class="font-medium">GUID:</span> <span class="font-mono">{result.guid}</span></div>
+											{/if}
+											{#if result.link}
+												<div><span class="font-medium">Torrent Link:</span> <a href={result.link} target="_blank" class="text-blue-600 hover:underline font-mono">{result.link}</a></div>
+											{/if}
+											{#if result.pubDate}
+												<div><span class="font-medium">Published:</span> {result.pubDate}</div>
+											{/if}
+											{#if result.rssId}
+												<div><span class="font-medium">RSS Entry ID:</span> {result.rssId}</div>
+											{/if}
+										</div>
+									</div>
+								</div>
+							{/each}
+						</div>
+					</CardContent>
+				</Card>
+			{/if}
+
 			<!-- Advanced Settings -->
 			<Card>
 				<CardHeader>
@@ -754,7 +1069,7 @@
 							</div>
 
 							<div>
-								<Label for="torrentPort">Torrent Port</Label>
+								<Label for="torrentPort" class="py-2">Torrent Port</Label>
 								<Input
 									id="torrentPort"
 									type="number"

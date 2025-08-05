@@ -1,27 +1,19 @@
 {
   "version": "1.0",
-  "last_updated": "2025-01-04T12:00:00Z",
-  "description": "User-specific title overrides for MoeDownloader - these take priority over global overrides",
+  "last_updated": "2025-08-05T15:28:35.700Z",
+  "description": "User-specific title overrides for MoeDownloader",
   "overrides": {
-    // Direct string-to-string title replacements (user-specific, highest priority)
-    "exact_match": {
-      // Add your custom title overrides here
-      // Example: "My Custom Title S2": "My Custom Title Season 2"
-    },
-
-    // Episode mapping rules using proper JSON format (user-specific)
+    "exact_match": {},
     "episode_mappings": [
-      // Add your custom episode mappings here
-      // Example:
-      // {
-      //   "source_title": "My Anime Title",
-      //   "source_episode_start": 13,
-      //   "source_episode_end": 24,
-      //   "dest_title": "My Anime Title Season 2",
-      //   "dest_episode_start": 1,
-      //   "dest_episode_end": 12,
-      //   "description": "Map episodes 13-24 to Season 2 episodes 1-12"
-      // }
+      {
+        "source_title": "Dainanaoji",
+        "source_episode_start": 13,
+        "source_episode_end": 9999,
+        "dest_title": "Dainanaoji Season 2",
+        "dest_episode_start": 1,
+        "dest_episode_end": 12,
+        "description": ""
+      }
     ]
   },
   "metadata": {

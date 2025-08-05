@@ -4,7 +4,7 @@ const path = require('path');
 const { configOperations } = require('../lib/database');
 
 // Placeholder URL - replace with your actual GitHub repository URL
-const TITLE_OVERRIDES_URL = '';
+const TITLE_OVERRIDES_URL = 'https://raw.githubusercontent.com/4Lajf/MoeDownloader/refs/heads/main/title-overrides.jsonc';
 const USER_OVERRIDES_FILE = 'user-title-overrides.json';
 
 /**
@@ -105,9 +105,11 @@ function createTitleOverridesManager() {
         await this.saveGlobalOverridesToConfig(globalOverridesData);
 
         // Update last fetch time
-        configOperations.set('title_overrides_last_fetch', lastFetchTime.toISOString());
+        if (configOperations && typeof configOperations.set === 'function') {
+          configOperations.set('title_overrides_last_fetch', lastFetchTime.toISOString());
+        }
 
-        console.log(`✅ Loaded global title overrides v${globalOverridesData.version} with ${this.getGlobalOverridesCount()} total rules`);
+        console.log(`✅ Loaded global title overrides with ${this.getGlobalOverridesCount()} total rules`);
         return globalOverridesData;
       } catch (error) {
         console.error('❌ Failed to fetch title overrides:', error);
@@ -149,10 +151,25 @@ function createTitleOverridesManager() {
      * Validate the structure of title overrides data
      */
     validateOverridesData(data) {
-      return data &&
-             data.version &&
-             data.overrides &&
-             typeof data.overrides === 'object';
+      if (!data) {
+        console.error('❌ Validation failed: No data provided');
+        return false;
+      }
+
+
+
+      if (!data.overrides) {
+        console.error('❌ Validation failed: Missing overrides field');
+        return false;
+      }
+
+      if (typeof data.overrides !== 'object') {
+        console.error('❌ Validation failed: overrides field is not an object');
+        return false;
+      }
+
+      console.log('✅ Title overrides data validation passed');
+      return true;
     },
 
     /**
@@ -160,14 +177,28 @@ function createTitleOverridesManager() {
      */
     async loadUserOverrides() {
       try {
+        console.log(`🔍 Checking for user overrides file: ${USER_OVERRIDES_FILE}`);
+        console.log(`🔍 File exists: ${fs.existsSync(USER_OVERRIDES_FILE)}`);
+
         if (fs.existsSync(USER_OVERRIDES_FILE)) {
           const content = fs.readFileSync(USER_OVERRIDES_FILE, 'utf8');
+          console.log(`🔍 User overrides file content (first 200 chars): ${content.substring(0, 200)}...`);
           console.log('🔧 Parsing user title overrides as JSONC format...');
           const parsedData = this.parseJSONC(content);
+          console.log('🔍 Parsed user overrides data:', JSON.stringify(parsedData, null, 2));
 
           if (this.validateUserOverridesData(parsedData)) {
             userOverridesData = parsedData;
-            console.log(`📦 Loaded user title overrides v${userOverridesData.version}`);
+            console.log(`📦 Loaded user title overrides successfully`);
+
+            // Debug: Show what was loaded
+            if (parsedData.overrides && parsedData.overrides.exact_match) {
+              const exactMatches = Object.entries(parsedData.overrides.exact_match);
+              console.log(`  📝 Loaded ${exactMatches.length} exact matches:`);
+              exactMatches.forEach(([original, override]) => {
+                console.log(`    "${original}" -> "${override}"`);
+              });
+            }
           } else {
             console.warn('⚠️  Invalid user overrides data structure, ignoring user overrides');
             userOverridesData = null;
@@ -178,6 +209,7 @@ function createTitleOverridesManager() {
         }
       } catch (error) {
         console.error('❌ Error loading user overrides:', error);
+        console.error('❌ Error details:', error.stack);
         userOverridesData = null;
       }
     },
@@ -187,7 +219,6 @@ function createTitleOverridesManager() {
      */
     validateUserOverridesData(data) {
       return data &&
-             data.version &&
              data.overrides &&
              typeof data.overrides === 'object';
     },
@@ -381,13 +412,21 @@ function createTitleOverridesManager() {
      */
     async loadGlobalOverridesFromConfig() {
       try {
+        // Check if configOperations is available and properly initialized
+        if (!configOperations || typeof configOperations.get !== 'function') {
+          console.warn('⚠️  Config operations not available, skipping cached global overrides');
+          return;
+        }
+
         const cachedData = configOperations.get('title_overrides_data');
         const lastFetch = configOperations.get('title_overrides_last_fetch');
 
         if (cachedData) {
           globalOverridesData = JSON.parse(cachedData);
           lastFetchTime = lastFetch ? new Date(lastFetch) : null;
-          console.log(`📦 Loaded cached global title overrides v${globalOverridesData.version}`);
+          console.log(`📦 Loaded cached global title overrides`);
+        } else {
+          console.log('ℹ️  No cached global title overrides found');
         }
       } catch (error) {
         console.error('❌ Error loading global title overrides from config:', error);
@@ -400,6 +439,12 @@ function createTitleOverridesManager() {
      */
     async saveGlobalOverridesToConfig(data) {
       try {
+        // Check if configOperations is available and properly initialized
+        if (!configOperations || typeof configOperations.set !== 'function') {
+          console.warn('⚠️  Config operations not available, skipping global overrides cache save');
+          return;
+        }
+
         configOperations.set('title_overrides_data', JSON.stringify(data));
         console.log('💾 Saved global title overrides to config cache');
       } catch (error) {

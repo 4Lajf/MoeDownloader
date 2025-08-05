@@ -72,6 +72,35 @@ async function main() {
     console.error('Failed to initialize AniList services:', error);
   }
 
+  // Initialize title overrides manager (after database is ready)
+  try {
+    await titleOverridesManager.initialize();
+
+    const userOverridesData = titleOverridesManager.getUserOverridesData();
+    console.log('🔍 MAIN APP STARTUP: User title overrides status:');
+    if (userOverridesData && userOverridesData.overrides) {
+      if (userOverridesData.overrides.exact_match) {
+        const exactMatches = Object.entries(userOverridesData.overrides.exact_match);
+        console.log(`  📝 Exact matches loaded: ${exactMatches.length}`);
+        exactMatches.forEach(([original, override]) => {
+          console.log(`    "${original}" -> "${override}"`);
+        });
+      } else {
+        console.log('  ⚠️  No exact matches found in user overrides');
+      }
+
+      if (userOverridesData.overrides.episode_mappings) {
+        console.log(`  📺 Episode mappings loaded: ${userOverridesData.overrides.episode_mappings.length}`);
+      } else {
+        console.log('  ⚠️  No episode mappings found in user overrides');
+      }
+    } else {
+      console.log('  ❌ No user overrides data loaded');
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize main app title overrides manager:', error);
+  }
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -350,6 +379,40 @@ ipcMain.handle("test-rss-continuous-numeration", async (_, url) => {
   }
 });
 
+// Test RSS feed with actual download functionality
+ipcMain.handle("test-rss-download", async (_, url, options = {}) => {
+  try {
+    console.log('🧪 TEST: Starting RSS download test for:', url);
+    console.log('🧪 TEST: Options:', options);
+
+    const result = await rssProcessor.testRSSDownload(url, options);
+    console.log('🧪 TEST: RSS download test completed:', JSON.stringify(result.summary || result, null, 2));
+
+    // Log detailed results for easier debugging
+    if (result.success && result.results) {
+      result.results.forEach((r, index) => {
+        console.log(`🧪 TEST: Download Result ${index + 1}:`);
+        console.log(`  Original Title: ${r.originalTitle}`);
+        console.log(`  Status: ${r.status}`);
+        console.log(`  Downloaded: ${r.downloaded}`);
+        console.log(`  Final Title: ${r.finalTitle || 'N/A'}`);
+        console.log(`  Download ID: ${r.downloadId || 'N/A'}`);
+        console.log(`  Match Found: ${r.matchResult?.entry ? 'Yes' : 'No'}`);
+        if (r.matchResult?.entry) {
+          console.log(`  Matched Whitelist Entry: ${r.matchResult.entry.title}`);
+        }
+        console.log(`  Error: ${r.error || 'None'}`);
+        console.log('---');
+      });
+    }
+
+    return result;
+  } catch (error) {
+    console.error('💥 TEST: RSS download test failed:', error);
+    throw error;
+  }
+});
+
 
 // AniList operations
 ipcMain.handle("anilist-get-auth-url", () => {
@@ -552,9 +615,18 @@ ipcMain.handle("save-user-title-overrides", async (_, overrides) => {
     // Write the overrides to the user file
     fs.writeFileSync(USER_OVERRIDES_FILE, JSON.stringify(overrides, null, 2), 'utf8');
 
-    // Reload user overrides in the manager
+    // Reload user overrides in the IPC handler's manager
     await titleOverridesManager.loadUserOverrides();
 
+    // Also reload user overrides in the RSS processor
+    if (rssProcessor && rssProcessor.reloadUserOverrides) {
+      const reloadResult = await rssProcessor.reloadUserOverrides();
+      if (!reloadResult.success) {
+        console.warn('⚠️  Failed to reload user overrides in RSS processor:', reloadResult.error);
+      }
+    }
+
+    console.log('✅ User title overrides saved and reloaded in all managers');
     return { success: true };
   } catch (error) {
     console.error('Failed to save user title overrides:', error);
@@ -573,22 +645,34 @@ ipcMain.handle("refresh-title-overrides", async () => {
 });
 
 // App cleanup handlers
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
   console.log('🧹 Cleaning up services before quit...');
 
   // Stop periodic refresh
   if (animeRelationsManager) {
-    animeRelationsManager.cleanup();
+    try {
+      animeRelationsManager.cleanup();
+    } catch (error) {
+      console.error('Error cleaning up anime relations manager:', error);
+    }
   }
 
   // Stop RSS monitoring
-  if (rssProcessor) {
-    rssProcessor.stopMonitoring();
+  if (appService) {
+    try {
+      appService.stopRSSMonitoring();
+    } catch (error) {
+      console.error('Error stopping RSS monitoring:', error);
+    }
   }
 
   // Stop download manager
   if (downloadManager) {
-    downloadManager.cleanup();
+    try {
+      await downloadManager.shutdown();
+    } catch (error) {
+      console.error('Error shutting down download manager:', error);
+    }
   }
 
   console.log('✅ Cleanup completed');

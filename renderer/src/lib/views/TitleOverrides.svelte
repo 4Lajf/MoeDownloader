@@ -168,11 +168,12 @@
   }
 </script>
 
-<div class="space-y-6">
+<div class="space-y-6 p-6">
   <div class="flex items-center justify-between">
     <div>
       <h2 class="text-2xl font-bold">Title Overrides</h2>
       <p class="text-muted-foreground">Manage custom title transformations and episode mappings</p>
+      <p class="text-muted-foreground">If title from fansub is not like on Anilist/MyAnimeList<br> and the app doesn't have overrides yet for that, you can add them here.</p>
     </div>
     <div class="flex gap-2">
       <Button onclick={refreshGlobalOverrides} variant="outline" disabled={isLoading}>
@@ -376,14 +377,7 @@
       </CardHeader>
       <CardContent class="space-y-3">
         <div class="text-sm space-y-2">
-          <p><strong>Priority Order:</strong></p>
-          <ol class="list-decimal list-inside space-y-1 ml-4">
-            <li>User exact matches (highest priority)</li>
-            <li>Global exact matches</li>
-            <li>User episode mappings</li>
-            <li>Global episode mappings</li>
-          </ol>
-          
+          <p><strong>Your overrides will take precedence over the app built-in overrides</strong></p>
           <p class="pt-2"><strong>Example:</strong></p>
           <p class="ml-4 text-muted-foreground">
             If you add "Grand Blue S2" → "Grand Blue Season 2" as an exact match,
