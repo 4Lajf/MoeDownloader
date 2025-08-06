@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { Minus, Square, X, Copy } from 'lucide-svelte';
+	import { Minus, Square, X, Copy, ArrowDown } from 'lucide-svelte';
 	import ipc from '../../ipc';
 
 	let isMaximized = $state(false);
@@ -22,6 +22,10 @@
 
 	async function closeWindow() {
 		await ipc.windowClose();
+	}
+
+	async function hideToTray() {
+		await ipc.windowHideToTray();
 	}
 </script>
 
@@ -55,6 +59,16 @@
 			{:else}
 				<Square class="w-3 h-3" />
 			{/if}
+		</Button>
+
+		<Button
+			variant="ghost"
+			size="sm"
+			class="h-8 w-8 p-0 hover:bg-muted rounded-none"
+			onclick={hideToTray}
+			aria-label="Hide to Tray"
+		>
+			<ArrowDown class="w-4 h-4" />
 		</Button>
 
 		<Button

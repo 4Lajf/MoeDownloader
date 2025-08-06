@@ -7,26 +7,40 @@ const {
 const { createRSSProcessor } = require("./rss-processor");
 const { createDownloadManager } = require("./download-manager");
 const { createTitleOverridesManager } = require("./title-overrides");
+const { createActivityLogger } = require("./activity-logger");
 
-function createAppService() {
-  let rssProcessor = null;
-  let downloadManager = null;
+function createAppService(sharedRSSProcessor = null, sharedDownloadManager = null, sharedActivityLogger = null) {
+  let rssProcessor = sharedRSSProcessor;
+  let downloadManager = sharedDownloadManager;
   let titleOverridesManager = null;
+  let activityLogger = sharedActivityLogger;
   let rssScheduleActive = false;
   let rssInterval = null;
 
   const service = {
     async initialize() {
       try {
-        // Initialize RSS processor and download manager
-        rssProcessor = createRSSProcessor();
-        downloadManager = createDownloadManager();
+        // Create activity logger if not provided
+        if (!activityLogger) {
+          activityLogger = createActivityLogger();
+        }
+
+        // Use shared instances if provided, otherwise create new ones
+        if (!rssProcessor) {
+          rssProcessor = createRSSProcessor(null, null, activityLogger);
+          await rssProcessor.initialize();
+        }
+
+        if (!downloadManager) {
+          downloadManager = createDownloadManager();
+        }
 
         // Initialize title overrides manager
         titleOverridesManager = createTitleOverridesManager();
         await titleOverridesManager.initialize();
 
-        console.log('App service initialized successfully');
+        // Log app initialization
+        activityLogger.appEvent('Application Started', 'MoeDownloader has been initialized and is ready to use');
         return { success: true };
       } catch (error) {
         console.error('Failed to initialize app service:', error);
@@ -72,7 +86,6 @@ function createAppService() {
 
     async startRSSMonitoring() {
       if (rssScheduleActive) {
-        console.log('RSS monitoring is already active');
         return;
       }
 
@@ -93,7 +106,6 @@ function createAppService() {
         }, intervalMs);
 
         rssScheduleActive = true;
-        console.log(`RSS monitoring started with ${intervalMinutes} minute interval`);
       } catch (error) {
         console.error('Failed to start RSS monitoring:', error);
         throw error;
@@ -106,7 +118,6 @@ function createAppService() {
         rssInterval = null;
       }
       rssScheduleActive = false;
-      console.log('RSS monitoring stopped');
     },
 
     async processRSSFeed() {
@@ -120,9 +131,7 @@ function createAppService() {
           throw new Error('RSS feed URL not configured');
         }
 
-        console.log('Processing RSS feed:', rssUrl);
         const result = await rssProcessor.processFeed(rssUrl);
-        console.log('RSS processing completed:', result);
         return result;
       } catch (error) {
         console.error('Error processing RSS feed:', error);

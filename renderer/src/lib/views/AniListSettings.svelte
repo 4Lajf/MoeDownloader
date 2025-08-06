@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
-  import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '$lib/components/ui/card';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Switch } from '$lib/components/ui/switch';
@@ -10,6 +10,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Separator } from '$lib/components/ui/separator';
   import { Trash2, ExternalLink, RefreshCw, Settings } from 'lucide-svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import ipc from '../../ipc';
 
   let isAuthenticated = false;
@@ -24,6 +25,18 @@
 
   // OAuth configuration for implicit grant
   let accessToken = '';
+
+  // Confirmation dialog state
+  let confirmDialog = {
+    open: false,
+    title: '',
+    description: '',
+    onConfirm: () => {}
+  };
+
+  // Sync prompt dialog state
+  let showSyncPrompt = false;
+  let selectedSyncLists = new Set(['CURRENT']); // Default to CURRENT list
 
   // Available list statuses
   const listStatuses = [
@@ -83,7 +96,7 @@
       // Open auth URL in external browser
       await ipc.openExternal(authUrl);
 
-      toast.info('Please complete authentication in your browser, then copy the access token from the URL and paste it below');
+      toast.info('Please complete authentication in your browser, then copy the access token from the page and paste it below');
     } catch (error) {
       console.error('Failed to start authentication:', error);
       toast.error('Failed to start authentication');
@@ -106,6 +119,9 @@
         toast.success(`Successfully authenticated as ${result.user.name}`);
         await loadData();
         accessToken = ''; // Clear the token input
+
+        // Show sync prompt after successful authentication
+        showSyncPrompt = true;
       } else {
         toast.error('Authentication failed: ' + result.error);
       }
@@ -128,11 +144,16 @@
     }
   }
 
-  async function deleteAccount(accountId: number) {
-    if (!confirm('Are you sure you want to delete this account?')) {
-      return;
-    }
+  function confirmDeleteAccount(accountId: number) {
+    confirmDialog = {
+      open: true,
+      title: 'Delete Account',
+      description: 'Are you sure you want to delete this account?',
+      onConfirm: () => deleteAccount(accountId)
+    };
+  }
 
+  async function deleteAccount(accountId: number) {
     try {
       await ipc.anilistAccountsDelete(accountId);
       toast.success('Account deleted successfully');
@@ -204,11 +225,16 @@
     }
   }
 
-  async function deleteAutoList(listId: number) {
-    if (!confirm('Are you sure you want to remove this auto-download list?')) {
-      return;
-    }
+  function confirmDeleteAutoList(listId: number) {
+    confirmDialog = {
+      open: true,
+      title: 'Remove Auto-Download List',
+      description: 'Are you sure you want to remove this auto-download list?',
+      onConfirm: () => deleteAutoList(listId)
+    };
+  }
 
+  async function deleteAutoList(listId: number) {
     try {
       await ipc.anilistAutoListsDelete(listId);
       toast.success('Auto-download list removed');
@@ -219,18 +245,7 @@
     }
   }
 
-  async function refreshAnimeRelations() {
-    try {
-      isLoading = true;
-      await ipc.animeRelationsForceRefresh();
-      toast.success('Anime relations refreshed successfully');
-    } catch (error) {
-      console.error('Failed to refresh anime relations:', error);
-      toast.error('Failed to refresh anime relations');
-    } finally {
-      isLoading = false;
-    }
-  }
+
 
   async function forceSyncAll() {
     try {
@@ -262,6 +277,63 @@
     }
   }
 
+  // Sync prompt functions
+  function toggleSyncList(status: string) {
+    if (selectedSyncLists.has(status)) {
+      selectedSyncLists.delete(status);
+    } else {
+      selectedSyncLists.add(status);
+    }
+    selectedSyncLists = new Set(selectedSyncLists); // Trigger reactivity
+  }
+
+  async function confirmSyncSetup() {
+    if (selectedSyncLists.size === 0) {
+      toast.error('Please select at least one list to sync');
+      return;
+    }
+
+    try {
+      isLoading = true;
+
+      // Reload data to ensure we have the latest account info
+      await loadData();
+
+      if (!activeAccount) {
+        toast.error('No active account found. Please try logging in again.');
+        return;
+      }
+
+      // Add selected lists to auto-download configuration
+      for (const status of selectedSyncLists) {
+        await ipc.anilistAutoListsUpsert({
+          account_id: activeAccount.id,
+          list_status: status,
+          enabled: true,
+          quality: '1080p',
+          preferred_group: 'any'
+        });
+      }
+
+      // Perform initial sync
+      await ipc.anilistSyncForceAll();
+
+      toast.success('AniList synchronization setup completed successfully');
+      showSyncPrompt = false;
+      await loadData();
+    } catch (error) {
+      console.error('Failed to setup sync:', error);
+      toast.error('Failed to setup synchronization');
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  function skipSyncSetup() {
+    showSyncPrompt = false;
+    toast.info('You can configure synchronization later in the settings');
+  }
+
 
 </script>
 
@@ -272,12 +344,8 @@
       <p class="text-muted-foreground">Connect your AniList account to automatically download anime from your lists</p>
     </div>
     <div class="flex gap-2">
-      <Button onclick={refreshAnimeRelations} variant="outline" disabled={isLoading}>
-        <RefreshCw class="w-4 h-4 mr-2" />
-        Refresh Relations
-      </Button>
       {#if isAuthenticated}
-        <Button onclick={forceSyncAll} variant="outline" disabled={isLoading}>
+        <Button onclick={forceSyncAll} variant="outline-purple" disabled={isLoading}>
           <RefreshCw class="w-4 h-4 mr-2" />
           Sync Now
         </Button>
@@ -288,25 +356,18 @@
   {#if !isAuthenticated}
     <!-- Authentication Section -->
     <Card>
-      <CardHeader>
-        <CardTitle>Connect AniList Account</CardTitle>
-        <CardDescription>
-          Connect your AniList account using OAuth authentication. No need to create your own application!
-        </CardDescription>
-      </CardHeader>
       <CardContent class="space-y-4">
         <div class="space-y-4">
-          <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h4 class="font-medium text-blue-900 mb-2">How to authenticate:</h4>
-            <ol class="text-sm text-blue-800 space-y-1 list-decimal list-inside">
+          <div class="bg-blue-950/30 dark:bg-blue-950/50 border border-blue-800/30 dark:border-blue-700/50 rounded-lg p-4">
+            <h4 class="font-medium text-blue-100 dark:text-blue-200 mb-2">How to authenticate:</h4>
+            <ol class="text-sm text-blue-200 dark:text-blue-300 space-y-1 list-decimal list-inside">
               <li>Click "Start Authentication" to open AniList in your browser</li>
               <li>Log in to AniList and approve the application</li>
-              <li>Copy the access token from the URL (after #access_token=)</li>
-              <li>Paste it in the field below and click "Complete Authentication"</li>
+              <li>Paste the code into field below and click "Complete"</li>
             </ol>
           </div>
 
-          <Button onclick={startAuthentication} disabled={authInProgress}>
+          <Button variant="info" onclick={startAuthentication} disabled={authInProgress}>
             {#if authInProgress}
               <RefreshCw class="w-4 h-4 mr-2 animate-spin" />
               Starting Authentication...
@@ -326,7 +387,7 @@
                 placeholder="Paste your access token here"
                 disabled={isLoading}
               />
-              <Button onclick={completeAuthentication} disabled={isLoading || !accessToken.trim()}>
+              <Button variant="success" onclick={completeAuthentication} disabled={isLoading || !accessToken.trim()}>
                 {#if isLoading}
                   <RefreshCw class="w-4 h-4 mr-2 animate-spin" />
                   Authenticating...
@@ -345,7 +406,7 @@
       <CardHeader>
         <CardTitle class="flex items-center justify-between">
           <span>Connected Account</span>
-          <Button variant="outline" size="sm" onclick={logout}>
+          <Button variant="outline-destructive" size="sm" onclick={logout}>
             Logout
           </Button>
         </CardTitle>
@@ -423,8 +484,8 @@
                     <Button
                       variant="ghost"
                       size="sm"
-                      onclick={() => deleteAutoList(list.id)}
-                      class="text-destructive hover:text-destructive"
+                      onclick={() => confirmDeleteAutoList(list.id)}
+                      class="text-muted-foreground hover:text-red-700 hover:bg-red-700/10 dark:hover:bg-red-600/10 dark:hover:text-red-300 transition-all duration-200"
                     >
                       <Trash2 class="w-4 h-4" />
                     </Button>
@@ -576,3 +637,65 @@
     </Card>
   {/if}
 </div>
+
+<!-- Sync Setup Prompt Dialog -->
+{#if showSyncPrompt}
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <Card class="w-full max-w-md mx-4">
+      <CardHeader>
+        <CardTitle>Setup AniList Synchronization</CardTitle>
+        <CardDescription>
+          Choose which lists you want to automatically sync to your download whitelist
+        </CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <div class="space-y-3">
+          {#each listStatuses as status}
+            <div class="flex items-center space-x-3">
+              <input
+                type="checkbox"
+                id="sync-{status.value}"
+                checked={selectedSyncLists.has(status.value)}
+                onchange={() => toggleSyncList(status.value)}
+                class="w-4 h-4 text-primary bg-background border-border rounded focus:ring-primary focus:ring-2"
+              />
+              <div class="flex-1">
+                <Label for="sync-{status.value}" class="font-medium cursor-pointer">
+                  {status.label}
+                </Label>
+                <p class="text-sm text-muted-foreground">
+                  {status.description}
+                </p>
+              </div>
+            </div>
+          {/each}
+        </div>
+
+        <div class="bg-blue-950/30 dark:bg-blue-950/50 border border-blue-800/30 dark:border-blue-700/50 rounded-lg p-3">
+          <p class="text-sm text-blue-200 dark:text-blue-300">
+            <strong>Note:</strong> Auto-synced entries will appear at the bottom of your whitelist with the title locked.
+            You can still edit quality and sub group preferences.
+          </p>
+        </div>
+      </CardContent>
+      <CardFooter class="flex gap-2">
+        <Button onclick={confirmSyncSetup} variant="success" disabled={isLoading}>
+          {#if isLoading}
+            <RefreshCw class="w-4 h-4 mr-2 animate-spin" />
+          {/if}
+          Setup Sync
+        </Button>
+        <Button onclick={skipSyncSetup} variant="outline" disabled={isLoading}>
+          Skip for Now
+        </Button>
+      </CardFooter>
+    </Card>
+  </div>
+{/if}
+
+<ConfirmDialog
+  bind:open={confirmDialog.open}
+  title={confirmDialog.title}
+  description={confirmDialog.description}
+  onConfirm={confirmDialog.onConfirm}
+/>

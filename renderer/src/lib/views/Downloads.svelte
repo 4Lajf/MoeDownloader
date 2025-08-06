@@ -264,9 +264,10 @@
 			<h1 class="text-3xl font-bold">Downloads</h1>
 			<p class="text-muted-foreground">Manage your anime downloads</p>
 		</div>
-		<Dialog.Root bind:open={showManualDialog}>
+		<div>
+			<Dialog.Root bind:open={showManualDialog}>
 			<Dialog.Trigger>
-				<Button class="gap-2">
+				<Button variant="success" class="gap-2">
 					<Plus class="w-4 h-4" />
 					Add Manual Download
 				</Button>
@@ -303,6 +304,7 @@
 						<Button variant="outline">Cancel</Button>
 					</Dialog.Close>
 					<Button
+						variant="success"
 						onclick={addManualDownload}
 						disabled={!magnetLink.trim() || addingDownload}
 					>
@@ -315,6 +317,7 @@
 				</Dialog.Footer>
 			</Dialog.Content>
 		</Dialog.Root>
+		</div>
 	</div>
 
 	{#if loading}
@@ -341,9 +344,14 @@
 								<div class="flex items-center gap-3 flex-1 min-w-0">
 									<StatusIcon class="w-5 h-5 {getStatusColor(download.status)} flex-shrink-0" />
 									<div class="min-w-0 flex-1">
-										<h3 class="font-medium truncate">
+										<h3 class="font-medium truncate" title={download.final_title || download.torrent_title}>
 											{download.final_title || download.torrent_title}
 										</h3>
+										{#if download.torrent_title && download.torrent_title !== (download.final_title || download.torrent_title)}
+											<p class="text-xs text-muted-foreground truncate mt-1" title={download.torrent_title}>
+												{download.torrent_title}
+											</p>
+										{/if}
 										<p class="text-sm text-muted-foreground">
 											{new Date(download.created_at).toLocaleString()}
 										</p>
@@ -360,11 +368,11 @@
 											<FolderOpen class="w-4 h-4" />
 										</Button>
 									{:else if download.status === 'downloading'}
-										<Button size="sm" variant="outline" onclick={() => pauseDownload(download.id)} title="Pause download">
+										<Button size="sm" variant="outline-warning" onclick={() => pauseDownload(download.id)} title="Pause download">
 											<Pause class="w-4 h-4" />
 										</Button>
 									{:else if download.status === 'paused'}
-										<Button size="sm" variant="outline" onclick={() => resumeDownload(download.id)} title="Resume download">
+										<Button size="sm" variant="outline-success" onclick={() => resumeDownload(download.id)} title="Resume download">
 											<Play class="w-4 h-4" />
 										</Button>
 									{:else if download.status === 'failed'}

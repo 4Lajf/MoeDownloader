@@ -8,6 +8,20 @@ export const CONTEXT_BRIDGE = {
     return await ipcRenderer.invoke(`get-version`, opt);
   },
 
+  /**
+   * Returns the application version from package.json.
+   */
+  getAppVersion: async (): Promise<string> => {
+    return await ipcRenderer.invoke('get-app-version');
+  },
+
+  /**
+   * Returns whether the application is packaged.
+   */
+  isAppPackaged: async (): Promise<boolean> => {
+    return await ipcRenderer.invoke('is-app-packaged');
+  },
+
   // Window controls
   windowMinimize: async (): Promise<void> => {
     return await ipcRenderer.invoke('window-minimize');
@@ -23,6 +37,22 @@ export const CONTEXT_BRIDGE = {
 
   windowIsMaximized: async (): Promise<boolean> => {
     return await ipcRenderer.invoke('window-is-maximized');
+  },
+
+  windowShow: async (): Promise<void> => {
+    return await ipcRenderer.invoke('window-show');
+  },
+
+  windowHideToTray: async (): Promise<void> => {
+    return await ipcRenderer.invoke('window-hide-to-tray');
+  },
+
+  windowShowFromTray: async (): Promise<void> => {
+    return await ipcRenderer.invoke('window-show-from-tray');
+  },
+
+  closeLoader: async (): Promise<void> => {
+    return await ipcRenderer.invoke('close-loader');
   },
 
   // App initialization and status
@@ -53,6 +83,10 @@ export const CONTEXT_BRIDGE = {
 
   processRSSFeed: async (): Promise<void> => {
     return await ipcRenderer.invoke('process-rss-feed');
+  },
+
+  searchRSSFeed: async (query: string): Promise<any> => {
+    return await ipcRenderer.invoke('search-rss-feed', query);
   },
 
   // Whitelist operations
@@ -182,6 +216,10 @@ export const CONTEXT_BRIDGE = {
     return await ipcRenderer.invoke('anilist-accounts-set-active', id);
   },
 
+  anilistAccountsUpsert: async (account: any): Promise<any> => {
+    return await ipcRenderer.invoke('anilist-accounts-upsert', account);
+  },
+
   anilistAccountsDelete: async (id: number): Promise<any> => {
     return await ipcRenderer.invoke('anilist-accounts-delete', id);
   },
@@ -274,6 +312,24 @@ export const CONTEXT_BRIDGE = {
 
   debugProcessedFiles: async (): Promise<any[]> => {
     return await ipcRenderer.invoke('debug-processed-files');
+  },
+
+  // Activity logs operations
+  getActivityLogs: async (limit?: number, type?: string): Promise<any[]> => {
+    return await ipcRenderer.invoke('get-activity-logs', limit, type);
+  },
+
+  clearActivityLogs: async (): Promise<any> => {
+    return await ipcRenderer.invoke('clear-activity-logs');
+  },
+
+  // Processed GUIDs operations
+  clearProcessedGuids: async (): Promise<any> => {
+    return await ipcRenderer.invoke('clear-processed-guids');
+  },
+
+  getProcessedGuidsCount: async (): Promise<number> => {
+    return await ipcRenderer.invoke('get-processed-guids-count');
   },
 
   // Filename parsing operations

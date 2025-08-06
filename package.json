@@ -16,8 +16,8 @@
     "test:anilist": "node electron/test/anilist-integration-test.js"
   },
   "build": {
-    "appId": "your.app.id",
-    "productName": "YourProductName",
+    "appId": "com.moedownloader.app",
+    "productName": "MoeDownloader",
     "directories": {
       "output": "build"
     },
@@ -58,6 +58,7 @@
     "prettier-plugin-svelte": "^3.2.1"
   },
   "dependencies": {
+    "@tanstack/table-core": "^8.21.3",
     "axios": "^1.11.0",
     "better-sqlite3": "^12.2.0",
     "electron-reload": "^2.0.0-alpha.1",

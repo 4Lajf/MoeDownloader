@@ -4,10 +4,128 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MoeDownloader</title>
+    <style>
+      /* Initial loading screen styles - Discord-style small square */
+      #initial-loading {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 250px;
+        height: 250px;
+        background: #0f0f23;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.24);
+      }
+
+      .initial-loading-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        gap: 12px;
+        padding-bottom: 20px;
+      }
+
+      .initial-loading-gif-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .initial-loading-gif {
+        width: 200px;
+        height: 200px;
+        object-fit: contain;
+      }
+
+      .initial-progress-container {
+        width: 200px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 8px;
+        opacity: 1 !important;
+        visibility: visible !important;
+      }
+
+      .initial-progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #4f46e5, #7c3aed);
+        border-radius: 2px;
+        width: 100%;
+        animation: progress-pulse 2s ease-in-out infinite;
+        opacity: 1 !important;
+        visibility: visible !important;
+      }
+
+      .initial-progress-text {
+        color: #e2e8f0;
+        font-size: 12px;
+        font-weight: 500;
+        text-align: center;
+        opacity: 0.8 !important;
+        visibility: visible !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      @keyframes progress-pulse {
+        0%, 100% {
+          opacity: 0.8;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+
+      /* Hide initial loading when app is ready */
+      .app-ready #initial-loading {
+        display: none;
+      }
+    </style>
   </head>
 
   <body>
+    <!-- Initial loading screen shown immediately -->
+    <div id="initial-loading">
+      <div class="initial-loading-content">
+        <div class="initial-loading-gif-container">
+          <img src="/loading.gif" alt="Loading..." class="initial-loading-gif" />
+        </div>
+        <div class="initial-progress-container">
+          <div class="initial-progress-bar"></div>
+        </div>
+        <div class="initial-progress-text">Application ready!</div>
+      </div>
+    </div>
+
+    <!-- Svelte app will mount here -->
     <div id="app"></div>
+
+    <!-- Initialize theme before Svelte app loads -->
+    <script>
+      // Initialize theme immediately - this runs before Svelte
+      (function() {
+        // Detect system theme preference, fallback to dark
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const systemTheme = prefersDark ? 'dark' : 'light';
+
+        // Apply system theme as initial theme (will be overridden by saved settings once app loads)
+        if (systemTheme === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      })();
+    </script>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

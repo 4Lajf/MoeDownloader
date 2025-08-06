@@ -5,9 +5,7 @@
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
-  import { Badge } from '$lib/components/ui/badge';
-  import { Separator } from '$lib/components/ui/separator';
-  import { Trash2, Plus, RefreshCw, Download, Upload } from 'lucide-svelte';
+  import { Trash2, Plus, RefreshCw } from 'lucide-svelte';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import ipc from '../../ipc';
 
@@ -166,6 +164,19 @@
       toast.error('Failed to refresh global overrides');
     }
   }
+
+  async function refreshAnimeRelations() {
+    try {
+      isLoading = true;
+      await ipc.animeRelationsForceRefresh();
+      toast.success('Anime relations refreshed successfully');
+    } catch (error) {
+      console.error('Failed to refresh anime relations:', error);
+      toast.error('Failed to refresh anime relations');
+    } finally {
+      isLoading = false;
+    }
+  }
 </script>
 
 <div class="space-y-6 p-6">
@@ -176,6 +187,10 @@
       <p class="text-muted-foreground">If title from fansub is not like on Anilist/MyAnimeList<br> and the app doesn't have overrides yet for that, you can add them here.</p>
     </div>
     <div class="flex gap-2">
+      <Button onclick={refreshAnimeRelations} variant="outline-info" disabled={isLoading}>
+        <RefreshCw class="w-4 h-4 mr-2" />
+        Refresh Relations
+      </Button>
       <Button onclick={refreshGlobalOverrides} variant="outline" disabled={isLoading}>
         <RefreshCw class="w-4 h-4 mr-2" />
         Refresh Global
@@ -198,12 +213,12 @@
       </CardHeader>
       <CardContent>
         <Collapsible.Root bind:open={exactMatchesOpen}>
-          <Collapsible.Trigger class="flex items-center justify-between w-full p-2 text-left hover:bg-gray-50 rounded">
+          <Collapsible.Trigger class="flex items-center justify-between w-full p-2 text-left hover:bg-muted/50 dark:hover:bg-muted/30 rounded">
             <span class="font-medium">Manage Exact Matches ({exactMatches.length})</span>
           </Collapsible.Trigger>
           <Collapsible.Content class="space-y-4 pt-4">
             <!-- Add new exact match -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border rounded-lg bg-gray-50">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border rounded-lg bg-muted/30 dark:bg-muted/20">
               <div>
                 <Label for="originalTitle">Original Title</Label>
                 <Input
@@ -221,7 +236,7 @@
                 />
               </div>
               <div class="flex items-end">
-                <Button onclick={addExactMatch} disabled={!newExactMatch.originalTitle.trim() || !newExactMatch.newTitle.trim()}>
+                <Button variant="success" onclick={addExactMatch} disabled={!newExactMatch.originalTitle.trim() || !newExactMatch.newTitle.trim()}>
                   <Plus class="w-4 h-4 mr-2" />
                   Add
                 </Button>
@@ -238,7 +253,7 @@
                       <span class="mx-2 text-muted-foreground">→</span>
                       <span>{match.newTitle}</span>
                     </div>
-                    <Button variant="outline" size="sm" onclick={() => removeExactMatch(index)}>
+                    <Button variant="outline-destructive" size="sm" onclick={() => removeExactMatch(index)}>
                       <Trash2 class="w-4 h-4" />
                     </Button>
                   </div>
@@ -262,12 +277,12 @@
       </CardHeader>
       <CardContent>
         <Collapsible.Root bind:open={episodeMappingsOpen}>
-          <Collapsible.Trigger class="flex items-center justify-between w-full p-2 text-left hover:bg-gray-50 rounded">
+          <Collapsible.Trigger class="flex items-center justify-between w-full p-2 text-left hover:bg-muted/50 dark:hover:bg-muted/30 rounded">
             <span class="font-medium">Manage Episode Mappings ({episodeMappings.length})</span>
           </Collapsible.Trigger>
           <Collapsible.Content class="space-y-4 pt-4">
             <!-- Add new episode mapping -->
-            <div class="p-4 border rounded-lg bg-gray-50 space-y-4">
+            <div class="p-4 border rounded-lg bg-muted/30 dark:bg-muted/20 space-y-4">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label for="sourceTitle">Source Title</Label>
@@ -335,7 +350,7 @@
                 />
               </div>
               
-              <Button onclick={addEpisodeMapping} disabled={!newEpisodeMapping.sourceTitle.trim() || !newEpisodeMapping.destTitle.trim()}>
+              <Button variant="success" onclick={addEpisodeMapping} disabled={!newEpisodeMapping.sourceTitle.trim() || !newEpisodeMapping.destTitle.trim()}>
                 <Plus class="w-4 h-4 mr-2" />
                 Add Episode Mapping
               </Button>
@@ -352,7 +367,7 @@
                         →
                         {mapping.destTitle} (eps {mapping.destEpisodeStart}-{mapping.destEpisodeEnd})
                       </div>
-                      <Button variant="outline" size="sm" onclick={() => removeEpisodeMapping(index)}>
+                      <Button variant="outline-destructive" size="sm" onclick={() => removeEpisodeMapping(index)}>
                         <Trash2 class="w-4 h-4" />
                       </Button>
                     </div>

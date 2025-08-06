@@ -59,13 +59,7 @@ function createDownloadManager(notificationService = null) {
 
         const downloadsToStart = queuedDownloads.slice(0, maxConcurrent - currentDownloading);
 
-        if (downloadsToStart.length === 0) {
-        } else {
-          console.log(`🚀 QUEUE: Starting ${downloadsToStart.length} downloads`);
-        }
-
         for (const download of downloadsToStart) {
-          console.log(`▶️  QUEUE: Starting download: "${download.final_title}"`);
           await this.startDownload(download);
         }
       } catch (error) {
@@ -90,7 +84,7 @@ function createDownloadManager(notificationService = null) {
           throw new Error('WebTorrent client not initialized');
         }
 
-        console.log(`Starting download: ${download.final_title || download.torrent_title}`);
+        // Starting download
 
         // Update status to downloading
         downloadOperations.updateProgress(download.id, {
@@ -116,7 +110,6 @@ function createDownloadManager(notificationService = null) {
 
         if (torrent) {
           // If torrent already exists, remove it first
-          console.log(`Removing existing torrent for download ${download.id}`);
           client.remove(torrent, { destroyStore: true });
         }
 
@@ -129,7 +122,6 @@ function createDownloadManager(notificationService = null) {
 
         // Set up event listeners
         torrent.on('ready', () => {
-          console.log(`Torrent ready: ${torrent.name}`);
           downloadOperations.updateProgress(download.id, {
             fileName: torrent.name,
             totalSize: torrent.length
@@ -152,7 +144,6 @@ function createDownloadManager(notificationService = null) {
         });
 
         torrent.on('done', () => {
-          console.log(`Download completed: ${torrent.name}`);
           downloadOperations.updateProgress(download.id, {
             status: 'completed',
             progress: 1,
@@ -307,8 +298,7 @@ function createDownloadManager(notificationService = null) {
           uploaded: currentUploaded
         });
 
-        console.log(`✋ PAUSE: Download paused: ${download.final_title || download.torrent_title} (${Math.round(currentProgress * 100)}%)`);
-        console.log(`✋ PAUSE: Torrent removed from client, data preserved on disk`);
+        // Download paused, torrent removed from client, data preserved on disk
 
         // Notify frontend about download pause
         if (notificationService) {
@@ -342,8 +332,7 @@ function createDownloadManager(notificationService = null) {
           status: 'queued'
         });
 
-        console.log(`▶️  RESUME: Resuming paused download: ${download.final_title || download.torrent_title}`);
-        console.log(`▶️  RESUME: Download queued for restart, will continue from existing progress`);
+        // Download queued for restart, will continue from existing progress
 
         // Notify frontend about download resume
         if (notificationService) {

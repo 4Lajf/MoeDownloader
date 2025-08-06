@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
+	import {
+		Card,
+		CardContent,
+		CardDescription,
+		CardHeader,
+		CardTitle
+	} from '$lib/components/ui/card';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { Progress } from '$lib/components/ui/progress';
@@ -16,7 +22,8 @@
 		Users,
 		ArrowDown,
 		ArrowUp,
-		HardDrive
+		HardDrive,
+		RefreshCw
 	} from 'lucide-svelte';
 	import { stats, isRSSMonitoring, recentDownloads } from '$lib/stores';
 	import { toast } from 'svelte-sonner';
@@ -34,12 +41,13 @@
 	let downloads = $state<any[]>([]);
 	let activeDownloads = $state<any[]>([]);
 	let rssMonitoring = $state(false);
+	let rssToggleLoading = $state(false);
 	let downloadDirectory = $state('');
 
 	// Subscribe to stores
-	stats.subscribe(value => currentStats = value);
-	recentDownloads.subscribe(value => downloads = value);
-	isRSSMonitoring.subscribe(value => rssMonitoring = value);
+	stats.subscribe((value) => (currentStats = value));
+	recentDownloads.subscribe((value) => (downloads = value));
+	isRSSMonitoring.subscribe((value) => (rssMonitoring = value));
 
 	onMount(() => {
 		loadStats();
@@ -85,8 +93,8 @@
 	async function loadActiveDownloads() {
 		try {
 			const allDownloads = await ipc.getAllDownloads();
-			activeDownloads = allDownloads.filter((d: any) =>
-				d.status === 'downloading' || d.status === 'queued' || d.status === 'paused'
+			activeDownloads = allDownloads.filter(
+				(d: any) => d.status === 'downloading' || d.status === 'queued' || d.status === 'paused'
 			);
 		} catch (error) {
 			console.error('Error loading active downloads:', error);
@@ -102,7 +110,11 @@
 	}
 
 	async function toggleRSSMonitoring() {
+		if (rssToggleLoading) return; // Prevent double-clicks
+
 		try {
+			rssToggleLoading = true;
+
 			if (rssMonitoring) {
 				await ipc.stopRSSMonitoring();
 				toast.success('RSS monitoring stopped', {
@@ -122,52 +134,110 @@
 				description: `Failed to ${rssMonitoring ? 'stop' : 'start'} RSS monitoring: ${error?.message || 'Unknown error'}`,
 				duration: 5000
 			});
+		} finally {
+			rssToggleLoading = false;
 		}
 	}
 
 	async function manualRSSCheck() {
+		let loadingToast: any = null;
 		try {
-			toast.loading('Checking RSS feed...', {
-				description: 'Processing RSS feed for new episodes.',
-				duration: 10000
+			loadingToast = toast.loading('Checking RSS feed...', {
+				description: 'Processing RSS feed for new episodes...',
+				duration: Infinity // Keep showing until we dismiss it
 			});
 
 			const result = await ipc.processRSSFeed();
 			loadStats();
 			loadRecentDownloads();
 
-			toast.dismiss();
+			toast.dismiss(loadingToast);
 			toast.success('RSS check completed', {
 				description: `Found ${(result as any)?.newEntries || 0} new entries.`,
 				duration: 4000
 			});
 		} catch (error: any) {
 			console.error('Manual RSS check failed:', error);
-			toast.dismiss();
-			toast.error('RSS check failed', {
-				description: `Failed to process RSS feed: ${error?.message || 'Unknown error'}`,
-				duration: 5000
+
+			if (loadingToast) {
+				toast.dismiss(loadingToast);
+			}
+
+			// Provide user-friendly error messages
+			let errorMessage = 'Unknown error occurred';
+			let errorDescription = error?.message || 'Please try again later';
+
+			if (error?.code === 'ENOTFOUND' || error?.code === 'EAI_AGAIN') {
+				errorMessage = 'No internet connection';
+				errorDescription = 'Please check your internet connection and try again';
+			} else if (error?.code === 'ETIMEDOUT' || error?.message?.includes('timeout')) {
+				errorMessage = 'Request timed out';
+				errorDescription = 'The RSS server is taking too long to respond. Please try again';
+			} else if (error?.code === 'ECONNREFUSED') {
+				errorMessage = 'Connection refused';
+				errorDescription = 'The RSS server appears to be down. Please try again later';
+			} else if (error?.message?.includes('Invalid RSS')) {
+				errorMessage = 'Invalid RSS feed';
+				errorDescription = 'The RSS feed format is invalid. Please check the RSS URL in settings';
+			} else if (error?.message?.includes('404')) {
+				errorMessage = 'RSS feed not found';
+				errorDescription =
+					'The RSS feed URL appears to be incorrect. Please check the URL in settings';
+			}
+
+			toast.error(errorMessage, {
+				description: errorDescription,
+				duration: 8000
 			});
 		}
 	}
 
 	function getStatusIcon(status: string) {
 		switch (status) {
-			case 'completed': return CheckCircle;
-			case 'downloading': return Download;
-			case 'queued': return Clock;
-			case 'failed': return AlertCircle;
-			default: return Clock;
+			case 'completed':
+				return CheckCircle;
+			case 'downloading':
+				return Download;
+			case 'queued':
+				return Clock;
+			case 'failed':
+				return AlertCircle;
+			default:
+				return Clock;
 		}
 	}
 
 	function getStatusColor(status: string) {
 		switch (status) {
-			case 'completed': return 'text-green-500';
-			case 'downloading': return 'text-blue-500';
-			case 'queued': return 'text-yellow-500';
-			case 'failed': return 'text-red-500';
-			default: return 'text-gray-500';
+			case 'completed':
+				return 'text-green-700 dark:text-green-300';
+			case 'downloading':
+				return 'text-blue-700 dark:text-blue-300';
+			case 'queued':
+				return 'text-amber-700 dark:text-amber-300';
+			case 'failed':
+				return 'text-red-700 dark:text-red-300';
+			case 'paused':
+				return 'text-orange-700 dark:text-orange-300';
+			default:
+				return 'text-gray-700 dark:text-gray-300';
+		}
+	}
+
+	function getStatusBadgeVariant(status: string) {
+		switch (status) {
+			case 'completed':
+				return 'default';
+			case 'downloading':
+				return 'secondary';
+			case 'queued':
+				return 'outline';
+			case 'failed':
+				return 'destructive';
+			case 'paused':
+				return 'secondary';
+			default:
+				return 'outline';
 		}
 	}
 
@@ -192,19 +262,26 @@
 	</div>
 
 	<!-- Quick Actions -->
-	<div class="flex gap-4 mb-6">
-		<Button onclick={toggleRSSMonitoring} variant={rssMonitoring ? 'destructive' : 'default'}>
-			{#if rssMonitoring}
-				<Pause class="w-4 h-4 mr-2" />
+	<div class="mb-6 flex gap-4">
+		<Button
+			onclick={toggleRSSMonitoring}
+			variant={rssMonitoring ? 'warning' : 'success'}
+			disabled={rssToggleLoading}
+		>
+			{#if rssToggleLoading}
+				<RefreshCw class="mr-2 h-4 w-4 animate-spin" />
+				{rssMonitoring ? 'Stopping...' : 'Starting...'}
+			{:else if rssMonitoring}
+				<Pause class="mr-2 h-4 w-4" />
 				Stop RSS Monitor
 			{:else}
-				<Play class="w-4 h-4 mr-2" />
+				<Play class="mr-2 h-4 w-4" />
 				Start RSS Monitor
 			{/if}
 		</Button>
 
-		<Button onclick={manualRSSCheck} variant="outline">
-			<Rss class="w-4 h-4 mr-2" />
+		<Button onclick={manualRSSCheck} variant="outline-info">
+			<Rss class="mr-2 h-4 w-4" />
 			Check RSS Now
 		</Button>
 	</div>
@@ -214,13 +291,13 @@
 		<Card class="mb-6">
 			<CardHeader>
 				<CardTitle class="flex items-center gap-2">
-					<Download class="w-5 h-5" />
+					<Download class="h-5 w-5" />
 					Active Downloads ({activeDownloads.length})
 				</CardTitle>
 				<CardDescription>
 					Currently downloading torrents
 					{#if downloadDirectory}
-						<span class="block text-xs mt-1">Downloading to: {downloadDirectory}</span>
+						<span class="mt-1 block text-xs">Downloading to: {downloadDirectory}</span>
 					{/if}
 				</CardDescription>
 			</CardHeader>
@@ -228,17 +305,17 @@
 				<div class="space-y-3">
 					{#each activeDownloads as download}
 						{@const StatusIcon = getStatusIcon(download.status)}
-						<div class="flex items-center justify-between p-3 border rounded-lg">
-							<div class="flex items-center gap-3 flex-1 min-w-0">
-								<StatusIcon class="w-4 h-4 {getStatusColor(download.status)}" />
+						<div class="flex items-center justify-between rounded-lg border p-3">
+							<div class="flex min-w-0 flex-1 items-center gap-3">
+								<StatusIcon class="h-4 w-4 {getStatusColor(download.status)}" />
 								<div class="min-w-0 flex-1">
-									<p class="text-sm font-medium truncate">
+									<p class="truncate text-sm font-medium">
 										{download.final_title || download.torrent_title}
 									</p>
 									{#if download.progress > 0}
 										<div class="mt-1">
 											<Progress value={download.progress * 100} class="h-1.5" />
-											<p class="text-xs text-muted-foreground mt-1">
+											<p class="text-muted-foreground mt-1 text-xs">
 												{Math.round(download.progress * 100)}% complete
 											</p>
 										</div>
@@ -250,20 +327,23 @@
 								{#if download.status === 'downloading'}
 									<div class="flex items-center gap-3">
 										<div class="flex items-center gap-1">
-											<ArrowDown class="w-3 h-3 text-green-500" />
+											<ArrowDown class="h-3 w-3 text-green-500" />
 											<span class="text-xs">{formatSpeed(download.download_speed || 0)}</span>
 										</div>
 										<div class="flex items-center gap-1">
-											<ArrowUp class="w-3 h-3 text-blue-500" />
+											<ArrowUp class="h-3 w-3 text-blue-500" />
 											<span class="text-xs">{formatSpeed(download.upload_speed || 0)}</span>
 										</div>
 										<div class="flex items-center gap-1">
-											<Users class="w-3 h-3 text-orange-500" />
+											<Users class="h-3 w-3 text-orange-500" />
 											<span class="text-xs">{download.peers || 0}</span>
 										</div>
 									</div>
 								{/if}
-								<Badge variant={download.status === 'completed' ? 'default' : 'secondary'} class="text-xs">
+								<Badge
+									variant={download.status === 'completed' ? 'default' : 'secondary'}
+									class="text-xs"
+								>
 									{download.status}
 								</Badge>
 							</div>
@@ -275,48 +355,48 @@
 	{/if}
 
 	<!-- Stats Cards -->
-	<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-6">
-		<Card>
+	<div class="mb-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+		<Card class="border-l-4 border-l-purple-700 hover:shadow-md transition-shadow">
 			<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
 				<CardTitle class="text-sm font-medium">Whitelist Entries</CardTitle>
-				<List class="h-4 w-4 text-muted-foreground" />
+				<List class="text-purple-700 dark:text-purple-400 h-4 w-4" />
 			</CardHeader>
 			<CardContent>
-				<div class="text-2xl font-bold">{currentStats.whitelistCount}</div>
-				<p class="text-xs text-muted-foreground">Anime titles tracked</p>
+				<div class="text-2xl font-bold text-purple-800 dark:text-purple-300">{currentStats.whitelistCount}</div>
+				<p class="text-muted-foreground text-xs">Anime titles tracked</p>
 			</CardContent>
 		</Card>
 
-		<Card>
+		<Card class="border-l-4 border-l-blue-700 hover:shadow-md transition-shadow">
 			<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
 				<CardTitle class="text-sm font-medium">Total Downloads</CardTitle>
-				<Download class="h-4 w-4 text-muted-foreground" />
+				<Download class="text-blue-700 dark:text-blue-400 h-4 w-4" />
 			</CardHeader>
 			<CardContent>
-				<div class="text-2xl font-bold">{currentStats.totalDownloads}</div>
-				<p class="text-xs text-muted-foreground">All time downloads</p>
+				<div class="text-2xl font-bold text-blue-800 dark:text-blue-300">{currentStats.totalDownloads}</div>
+				<p class="text-muted-foreground text-xs">All time downloads</p>
 			</CardContent>
 		</Card>
 
-		<Card>
+		<Card class="border-l-4 border-l-green-700 hover:shadow-md transition-shadow">
 			<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
 				<CardTitle class="text-sm font-medium">Active Downloads</CardTitle>
-				<div class="h-4 w-4 rounded-full bg-green-500"></div>
+				<Download class="text-green-700 dark:text-green-400 h-4 w-4" />
 			</CardHeader>
 			<CardContent>
-				<div class="text-2xl font-bold">{currentStats.activeDownloads}</div>
-				<p class="text-xs text-muted-foreground">Currently downloading</p>
+				<div class="text-2xl font-bold text-green-800 dark:text-green-300">{currentStats.activeDownloads}</div>
+				<p class="text-muted-foreground text-xs">Currently downloading</p>
 			</CardContent>
 		</Card>
 
-		<Card>
+		<Card class="border-l-4 border-l-amber-700 hover:shadow-md transition-shadow">
 			<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
 				<CardTitle class="text-sm font-medium">RSS Entries</CardTitle>
-				<Rss class="h-4 w-4 text-muted-foreground" />
+				<Rss class="text-amber-700 dark:text-amber-400 h-4 w-4" />
 			</CardHeader>
 			<CardContent>
-				<div class="text-2xl font-bold">{currentStats.processedEntries}</div>
-				<p class="text-xs text-muted-foreground">Processed entries</p>
+				<div class="text-2xl font-bold text-amber-800 dark:text-amber-300">{currentStats.processedEntries}</div>
+				<p class="text-muted-foreground text-xs">Processed entries</p>
 			</CardContent>
 		</Card>
 	</div>
@@ -332,21 +412,21 @@
 				<div class="space-y-4">
 					{#each downloads as download}
 						{@const StatusIcon = getStatusIcon(download.status)}
-						<div class="flex items-center justify-between p-3 border rounded-lg">
+						<div class="flex items-center justify-between rounded-lg border p-3">
 							<div class="flex items-center gap-3">
-								<StatusIcon class="w-4 h-4 {getStatusColor(download.status)}" />
+								<StatusIcon class="h-4 w-4 {getStatusColor(download.status)}" />
 								<div class="min-w-0 flex-1">
-									<p class="text-sm font-medium truncate">
+									<p class="truncate text-sm font-medium">
 										{download.final_title || download.torrent_title}
 									</p>
-									<p class="text-xs text-muted-foreground">
+									<p class="text-muted-foreground text-xs">
 										{new Date(download.created_at).toLocaleString()}
 									</p>
 								</div>
 							</div>
 
 							<div class="flex items-center gap-2">
-								<Badge variant={download.status === 'completed' ? 'default' : 'secondary'}>
+								<Badge variant={getStatusBadgeVariant(download.status)}>
 									{download.status}
 								</Badge>
 								{#if download.progress > 0}
@@ -359,9 +439,9 @@
 					{/each}
 				</div>
 			{:else}
-				<div class="text-center py-8">
-					<Download class="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-					<h3 class="text-lg font-semibold mb-2">No downloads yet</h3>
+				<div class="py-8 text-center">
+					<Download class="text-muted-foreground mx-auto mb-4 h-12 w-12" />
+					<h3 class="mb-2 text-lg font-semibold">No downloads yet</h3>
 					<p class="text-muted-foreground">Downloads will appear here once RSS processing begins</p>
 				</div>
 			{/if}

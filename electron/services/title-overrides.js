@@ -4,7 +4,7 @@ const path = require('path');
 const { configOperations } = require('../lib/database');
 
 // Placeholder URL - replace with your actual GitHub repository URL
-const TITLE_OVERRIDES_URL = 'https://raw.githubusercontent.com/4Lajf/MoeDownloader/refs/heads/main/title-overrides.jsonc';
+const TITLE_OVERRIDES_URL = 'https://raw.githubusercontent.com/4Lajf/MoeDownloader-assets/refs/heads/main/title-overrides.jsonc';
 const USER_OVERRIDES_FILE = 'user-title-overrides.json';
 
 /**
@@ -182,10 +182,8 @@ function createTitleOverridesManager() {
 
         if (fs.existsSync(USER_OVERRIDES_FILE)) {
           const content = fs.readFileSync(USER_OVERRIDES_FILE, 'utf8');
-          console.log(`🔍 User overrides file content (first 200 chars): ${content.substring(0, 200)}...`);
           console.log('🔧 Parsing user title overrides as JSONC format...');
           const parsedData = this.parseJSONC(content);
-          console.log('🔍 Parsed user overrides data:', JSON.stringify(parsedData, null, 2));
 
           if (this.validateUserOverridesData(parsedData)) {
             userOverridesData = parsedData;
@@ -255,7 +253,7 @@ function createTitleOverridesManager() {
       const { releaseGroup, anilistId } = options;
       let transformedTitle = originalTitle;
 
-      console.log(`🔍 Applying title overrides to: "${originalTitle}"`);
+      // console.log(`🔍 Applying title overrides to: "${originalTitle}"`);
 
       try {
         // 1. Check user overrides first (highest priority)
@@ -328,7 +326,7 @@ function createTitleOverridesManager() {
           }
         }
 
-        console.log(`ℹ️  No title override applied for: "${originalTitle}"`);
+        // console.log(`ℹ️  No title override applied for: "${originalTitle}"`);
         return originalTitle;
 
       } catch (error) {

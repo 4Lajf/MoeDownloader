@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, nativeImage } from "electron";
 import electronReload from "electron-reload";
 import { join } from "path";
 import {
@@ -10,7 +10,9 @@ import {
   anilistAccountOperations,
   anilistAutoListOperations,
   anilistAnimeCacheOperations,
-  processedFilesOperations
+  processedFilesOperations,
+  activityLogsOperations,
+  processedGuidsOperations
 } from "./lib/database";
 import { createAppService } from "./services/app-service";
 import { createDownloadManager } from "./services/download-manager";
@@ -19,8 +21,11 @@ import { createNotificationService } from "./services/notification-service";
 import { createAniListService } from "./services/anilist-service";
 import { createAnimeRelationsManager } from "./services/anime-relations";
 import { createAniListSyncService } from "./services/anilist-sync";
+import { createActivityLogger } from "./services/activity-logger";
 
 let mainWindow: BrowserWindow;
+let loaderWindow: BrowserWindow;
+let tray: Tray | null = null;
 let appService: any;
 let downloadManager: any;
 let rssProcessor: any;
@@ -28,31 +33,90 @@ let notificationService: any;
 let anilistService: any;
 let animeRelationsManager: any;
 let anilistSyncService: any;
+let activityLogger: any;
 
-app.once("ready", main);
+// Set app name for notifications and system integration
+app.setName('MoeDownloader');
+
+app.once("ready", () => {
+  // Create and show loader window immediately
+  createLoaderWindow();
+
+  // Start main initialization process
+  main();
+});
+
+function createLoaderWindow() {
+  loaderWindow = new BrowserWindow({
+    width: 250,
+    height: 250,
+    frame: false,
+    alwaysOnTop: true,
+    resizable: false,
+    movable: true,
+    minimizable: true,
+    maximizable: false,
+    closable: true, // Allow programmatic closing
+    skipTaskbar: true,
+    show: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  // Load the loader HTML file
+  loaderWindow.loadFile(join(__dirname, "loader.html"));
+
+  loaderWindow.once('ready-to-show', () => {
+    loaderWindow.show();
+    loaderWindow.center();
+  });
+
+  loaderWindow.on('closed', () => {
+    loaderWindow = null;
+  });
+}
 
 async function main() {
   // Initialize database first
   try {
+    updateLoaderProgress('Initializing database...', 10);
     await initDatabase();
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Failed to initialize database:', error);
+
+    // Close loader window on error
+    if (loaderWindow && !loaderWindow.isDestroyed()) {
+      loaderWindow.close();
+    }
+
     app.quit();
     return;
   }
 
   // Initialize services
+  updateLoaderProgress('Creating services...', 20);
+  activityLogger = createActivityLogger();
   notificationService = createNotificationService();
   anilistService = createAniListService();
   animeRelationsManager = createAnimeRelationsManager();
-  appService = createAppService();
   downloadManager = createDownloadManager(notificationService);
-  rssProcessor = createRSSProcessor(notificationService, anilistService);
+  rssProcessor = createRSSProcessor(notificationService, anilistService, activityLogger);
 
   // Initialize RSS processor
+  updateLoaderProgress('Setting up RSS processor...', 35);
   await rssProcessor.initialize();
   console.log('🔄 RSS processor initialized');
+
+  // Initialize app service with shared instances
+  updateLoaderProgress('Initializing app service...', 50);
+  appService = createAppService(rssProcessor, downloadManager, activityLogger);
+  await appService.initialize();
+  console.log('🔄 App service initialized');
 
   // Log RSS processing configuration
   const rssUrl = configOperations.get('rss_feed_url');
@@ -61,6 +125,7 @@ async function main() {
   console.log(`⏰ RSS: Check interval: ${rssInterval} minutes`);
 
   // Initialize AniList services
+  updateLoaderProgress('Configuring AniList...', 65);
   try {
     await anilistService.initialize();
     await animeRelationsManager.initialize();
@@ -73,6 +138,7 @@ async function main() {
   }
 
   // Initialize title overrides manager (after database is ready)
+  updateLoaderProgress('Loading title overrides...', 80);
   try {
     await titleOverridesManager.initialize();
 
@@ -101,14 +167,22 @@ async function main() {
     console.error('❌ Failed to initialize main app title overrides manager:', error);
   }
 
+  updateLoaderProgress('Creating main window...', 90);
+
+  // Create app icon
+  const iconPath = join(__dirname, "assets", "icon.png");
+  const appIcon = nativeImage.createFromPath(iconPath);
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: "MoeDownloader",
+    icon: appIcon,
     resizable: true,
     show: false,
     frame: false, // Remove default titlebar
     titleBarStyle: 'hidden',
+    backgroundColor: '#00000000', // Transparent background
     webPreferences: {
       // devTools: !app.isPackaged,
       devTools: true,
@@ -146,6 +220,12 @@ async function main() {
       console.log('Successfully loaded Vite dev server');
     } catch (error) {
       console.error('Failed to load Vite dev server:', error);
+
+      // Close loader window on error
+      if (loaderWindow && !loaderWindow.isDestroyed()) {
+        loaderWindow.close();
+      }
+
       // Show window anyway so user can see the error
       mainWindow.show();
       return;
@@ -155,24 +235,217 @@ async function main() {
   // Set up notification service with main window
   notificationService.setMainWindow(mainWindow);
 
-  // Show window when ready, with fallback timeout
-  mainWindow.once("ready-to-show", () => {
-    console.log('Window ready to show');
-    mainWindow.show();
+  // Create system tray
+  createTray();
+
+  // Handle window close event (hide to tray instead of closing)
+  mainWindow.on('close', (event) => {
+    const hideToTray = configOperations.get('hide_to_tray_on_close');
+    if (hideToTray === 'true' || hideToTray === true) {
+      event.preventDefault();
+      mainWindow.hide();
+
+      // Show notification about hiding to tray (only once per session)
+      if (!global.hasShownTrayNotification) {
+        notificationService.sendOSNotification(
+          'MoeDownloader',
+          'Application was minimized to tray. Click the tray icon to restore.',
+          {
+            onClick: () => {
+              mainWindow.show();
+              mainWindow.focus();
+            }
+          }
+        );
+        global.hasShownTrayNotification = true;
+      }
+    }
   });
 
-  // Fallback: show window after 3 seconds if ready-to-show doesn't fire
-  setTimeout(() => {
+  // Show window immediately when ready to display loading screen
+  mainWindow.once("ready-to-show", () => {
+    console.log('Window ready to show - displaying main window');
+    updateLoaderProgress('Ready!', 100);
+
+    // Show main window after a brief delay to let progress complete
+    setTimeout(() => {
+      const startMinimized = configOperations.get('start_minimized_to_tray');
+      if (startMinimized === 'true' || startMinimized === true) {
+        // Don't show the window if starting minimized
+        console.log('Starting minimized to tray');
+      } else {
+        mainWindow.show();
+      }
+      // Note: Loader window will be closed by the Svelte app when it's fully ready
+    }, 500);
+  });
+
+  // Also show on did-finish-load as a backup
+  mainWindow.webContents.once('did-finish-load', () => {
     if (!mainWindow.isVisible()) {
-      console.log('Window not visible after 3 seconds, forcing show');
+      console.log('Page loaded - showing window with loading screen');
       mainWindow.show();
+
+      // Close loader window if it's still open
+      setTimeout(() => {
+        if (loaderWindow && !loaderWindow.isDestroyed()) {
+          loaderWindow.close();
+        }
+      }, 500);
     }
-  }, 3000);
+  });
+}
+
+function createTray() {
+  const iconPath = join(__dirname, "assets", "icon.png");
+  const trayIcon = nativeImage.createFromPath(iconPath);
+
+  // Resize icon for tray (16x16 or 32x32 depending on platform)
+  const resizedIcon = trayIcon.resize({ width: 16, height: 16 });
+
+  tray = new Tray(resizedIcon);
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show MoeDownloader',
+      click: () => {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    },
+    {
+      label: 'Hide to Tray',
+      click: () => {
+        mainWindow.hide();
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'RSS Monitoring',
+      submenu: [
+        {
+          label: 'Start Monitoring',
+          click: async () => {
+            try {
+              await appService.startRSSMonitoring();
+              notificationService.sendOSNotification(
+                'RSS Monitoring Started',
+                'RSS feed monitoring is now active'
+              );
+            } catch (error) {
+              console.error('Error starting RSS monitoring from tray:', error);
+            }
+          }
+        },
+        {
+          label: 'Stop Monitoring',
+          click: async () => {
+            try {
+              await appService.stopRSSMonitoring();
+              notificationService.sendOSNotification(
+                'RSS Monitoring Stopped',
+                'RSS feed monitoring has been stopped'
+              );
+            } catch (error) {
+              console.error('Error stopping RSS monitoring from tray:', error);
+            }
+          }
+        },
+        {
+          label: 'Check Now',
+          click: async () => {
+            let checkingNotification = null;
+            try {
+              // Show persistent checking notification
+              checkingNotification = notificationService.sendOSNotification(
+                'RSS Check in Progress',
+                'Checking RSS feed for new episodes...',
+                { silent: true }
+              );
+
+              const result = await rssProcessor.processRSSFeed();
+
+              // Close the checking notification
+              if (checkingNotification) {
+                checkingNotification.close();
+              }
+
+              // Show completion notification
+              notificationService.sendOSNotification(
+                'RSS Check Complete',
+                `Found ${result?.newEntries || 0} new entries`
+              );
+            } catch (error) {
+              console.error('Error processing RSS from tray:', error);
+
+              // Close the checking notification
+              if (checkingNotification) {
+                checkingNotification.close();
+              }
+
+              // Show user-friendly error notification
+              let errorMessage = 'Unknown error occurred';
+              if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+                errorMessage = 'No internet connection available';
+              } else if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+                errorMessage = 'Request timed out - server may be slow';
+              } else if (error.code === 'ECONNREFUSED') {
+                errorMessage = 'Connection refused - server may be down';
+              } else if (error.message) {
+                errorMessage = error.message;
+              }
+
+              notificationService.sendOSNotification(
+                'RSS Check Failed',
+                errorMessage,
+                { urgency: 'critical' }
+              );
+            }
+          }
+        }
+      ]
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit MoeDownloader',
+      click: () => {
+        // Force quit the application
+        app.quit();
+      }
+    }
+  ]);
+
+  tray.setContextMenu(contextMenu);
+  tray.setToolTip('MoeDownloader - Anime Download Manager');
+
+  // Double-click to show/hide window
+  tray.on('double-click', () => {
+    if (mainWindow.isVisible()) {
+      mainWindow.hide();
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
 }
 
 // IPC Handlers
 ipcMain.handle("get-version", (_, key: "electron" | "node") => {
   return String(process.versions[key]);
+});
+
+ipcMain.handle("get-app-version", () => {
+  try {
+    // Use Electron's app.getVersion() which reads from package.json
+    return app.getVersion();
+  } catch (error) {
+    console.error('Error reading app version:', error);
+    return '1.0.0';
+  }
+});
+
+ipcMain.handle("is-app-packaged", () => {
+  return app.isPackaged;
 });
 
 // Window controls
@@ -192,9 +465,51 @@ ipcMain.handle("window-close", () => {
   mainWindow?.close();
 });
 
+ipcMain.handle("window-hide-to-tray", () => {
+  mainWindow?.hide();
+});
+
+ipcMain.handle("window-show-from-tray", () => {
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 ipcMain.handle("window-is-maximized", () => {
   return mainWindow?.isMaximized() || false;
 });
+
+ipcMain.handle("window-show", () => {
+  if (mainWindow && !mainWindow.isVisible()) {
+    console.log('Renderer requested window show');
+    mainWindow.show();
+  }
+});
+
+ipcMain.handle("close-loader", () => {
+  if (loaderWindow && !loaderWindow.isDestroyed()) {
+    console.log('Renderer requested loader close - closing loader window');
+    loaderWindow.close();
+  } else {
+    console.log('Loader window already closed or destroyed');
+  }
+});
+
+// Function to update loader progress
+function updateLoaderProgress(text: string, progress: number) {
+  if (loaderWindow && !loaderWindow.isDestroyed()) {
+    loaderWindow.webContents.executeJavaScript(`
+      if (window.updateProgress) {
+        window.updateProgress('${text}', ${progress});
+      }
+    `).catch(() => {
+      // Ignore errors if loader is closing
+    });
+  }
+}
+
+
 
 // App initialization
 ipcMain.handle("initialize-app", async () => {
@@ -231,6 +546,16 @@ ipcMain.handle("stop-rss-monitoring", () => {
 
 ipcMain.handle("process-rss-feed", () => {
   return appService.processRSSFeed();
+});
+
+ipcMain.handle("search-rss-feed", async (_, query) => {
+  try {
+    const result = await rssProcessor.searchFeed(query);
+    return result;
+  } catch (error) {
+    console.error('💥 SEARCH: RSS search failed:', error);
+    throw error;
+  }
 });
 
 // Whitelist operations
@@ -302,13 +627,86 @@ ipcMain.handle("cleanup-torrents", () => {
 
 // Settings operations
 ipcMain.handle("get-settings", () => {
-  return configOperations.getAll();
+  const config = configOperations.getAll();
+
+  // Map database keys to UI keys
+  const settingsMapping = {
+    'rss_feed_url': 'rssUrl',
+    'check_interval_minutes': 'checkInterval',
+    'downloads_directory': 'downloadPath',
+    'max_concurrent_downloads': 'maxConcurrentDownloads',
+    'torrent_port': 'torrentPort',
+    'enable_auto_start': 'enableAutoStart',
+    'disabled_fansub_groups': 'disabledFansubGroups',
+    'enable_os_notifications': 'enableNotifications',
+    'notification_sound': 'notificationSound',
+    'enable_notification_download-started': 'notifyDownloadStart',
+    'enable_notification_download-completed': 'notifyDownloadComplete',
+    'enable_notification_download-failed': 'notifyDownloadError',
+    'enable_notification_rss-processed': 'notifyRSSNewItems',
+    'enable_notification_rss-error': 'notifyRSSError',
+    'anilist_access_token': 'anilistAccessToken',
+    'anilist_username': 'anilistUsername',
+    'anilist_user_id': 'anilistUserId',
+    'hide_to_tray_on_close': 'hideToTrayOnClose',
+    'start_minimized_to_tray': 'startMinimizedToTray',
+    'show_advanced_tabs_in_sidebar': 'showAdvancedTabsInSidebar',
+    'enable_dht': 'enableDHT',
+    'enable_pex': 'enablePEX',
+    'enable_lsd': 'enableLSD'
+  };
+
+  // Convert database config to UI settings format
+  const uiSettings = {};
+  for (const [dbKey, uiKey] of Object.entries(settingsMapping)) {
+    if (config[dbKey] !== undefined) {
+      let value = config[dbKey];
+      // Convert string booleans to actual booleans
+      if (value === 'true') value = true;
+      else if (value === 'false') value = false;
+      // Convert string numbers to actual numbers
+      else if (!isNaN(value) && !isNaN(parseFloat(value))) value = parseFloat(value);
+
+      uiSettings[uiKey] = value;
+    }
+  }
+
+  return uiSettings;
 });
 
 ipcMain.handle("save-settings", (_, settings) => {
-  const promises = Object.entries(settings).map(([key, value]) =>
-    configOperations.set(key, String(value))
-  );
+  // Map UI keys to database keys
+  const settingsMapping = {
+    'rssUrl': 'rss_feed_url',
+    'checkInterval': 'check_interval_minutes',
+    'downloadPath': 'downloads_directory',
+    'maxConcurrentDownloads': 'max_concurrent_downloads',
+    'torrentPort': 'torrent_port',
+    'enableAutoStart': 'enable_auto_start',
+    'disabledFansubGroups': 'disabled_fansub_groups',
+    'enableNotifications': 'enable_os_notifications',
+    'notificationSound': 'notification_sound',
+    'notifyDownloadStart': 'enable_notification_download-started',
+    'notifyDownloadComplete': 'enable_notification_download-completed',
+    'notifyDownloadError': 'enable_notification_download-failed',
+    'notifyRSSNewItems': 'enable_notification_rss-processed',
+    'notifyRSSError': 'enable_notification_rss-error',
+    'anilistAccessToken': 'anilist_access_token',
+    'anilistUsername': 'anilist_username',
+    'anilistUserId': 'anilist_user_id',
+    'hideToTrayOnClose': 'hide_to_tray_on_close',
+    'startMinimizedToTray': 'start_minimized_to_tray',
+    'showAdvancedTabsInSidebar': 'show_advanced_tabs_in_sidebar',
+    'enableDHT': 'enable_dht',
+    'enablePEX': 'enable_pex',
+    'enableLSD': 'enable_lsd'
+  };
+
+  const promises = Object.entries(settings).map(([uiKey, value]) => {
+    const dbKey = settingsMapping[uiKey] || uiKey; // Use original key if no mapping found
+    return configOperations.set(dbKey, String(value));
+  });
+
   return Promise.all(promises);
 });
 
@@ -460,6 +858,10 @@ ipcMain.handle("anilist-accounts-set-active", (_, id) => {
   return anilistAccountOperations.setActive(id);
 });
 
+ipcMain.handle("anilist-accounts-upsert", (_, account) => {
+  return anilistAccountOperations.upsert(account);
+});
+
 ipcMain.handle("anilist-accounts-delete", (_, id) => {
   return anilistAccountOperations.delete(id);
 });
@@ -500,18 +902,30 @@ ipcMain.handle("anime-relations-get-data", () => {
 
 // AniList sync operations
 ipcMain.handle("anilist-sync-force-all", async () => {
+  if (!anilistSyncService) {
+    throw new Error('AniList sync service not initialized');
+  }
   return await anilistSyncService.forceSyncAll();
 });
 
 ipcMain.handle("anilist-sync-get-status", () => {
+  if (!anilistSyncService) {
+    return { isRunning: false, hasPeriodicSync: false, intervalHours: 4 };
+  }
   return anilistSyncService.getSyncStatus();
 });
 
 ipcMain.handle("anilist-sync-start-periodic", () => {
+  if (!anilistSyncService) {
+    throw new Error('AniList sync service not initialized');
+  }
   return anilistSyncService.startPeriodicSync();
 });
 
 ipcMain.handle("anilist-sync-stop-periodic", () => {
+  if (!anilistSyncService) {
+    throw new Error('AniList sync service not initialized');
+  }
   return anilistSyncService.stopPeriodicSync();
 });
 
@@ -592,6 +1006,25 @@ ipcMain.handle("parse-multiple-filenames", (_, filenames) => {
     console.error('Failed to parse multiple filenames:', error);
     throw error;
   }
+});
+
+// Activity logs operations
+ipcMain.handle("get-activity-logs", (_, limit, type) => {
+  return activityLogsOperations.getRecent(limit, type);
+});
+
+ipcMain.handle("clear-activity-logs", () => {
+  return activityLogsOperations.clear();
+});
+
+// Processed GUIDs operations
+ipcMain.handle("clear-processed-guids", () => {
+  return processedGuidsOperations.clear();
+});
+
+ipcMain.handle("get-processed-guids-count", () => {
+  const guids = processedGuidsOperations.getAll();
+  return guids.length;
 });
 
 // Title overrides operations
@@ -675,11 +1108,20 @@ app.on('before-quit', async () => {
     }
   }
 
+  // Cleanup tray
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
+
   console.log('✅ Cleanup completed');
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  // On Windows/Linux, keep the app running in the tray even when all windows are closed
+  // Only quit if tray is not available or if explicitly requested
+  const hideToTray = configOperations.get('hide_to_tray_on_close');
+  if (process.platform !== 'darwin' && (!tray || hideToTray === 'false')) {
     app.quit();
   }
 });

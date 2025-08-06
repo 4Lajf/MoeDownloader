@@ -1,4 +1,4 @@
-const { Anitomy, ElementCategory } = require('./anitomy-faithful');
+const { Anitomy, ElementCategory } = require('./anitomy');
 
 /**
  * Filename Parser Utility
@@ -15,26 +15,26 @@ class FilenameParser {
    * @returns {Object} - Parsed metadata object
    */
   parse(filename) {
-    console.log(`🔍 PARSE: Parsing filename: "${filename}"`);
-    console.log(`🔍 PARSE: Filename length: ${filename.length}`);
+    // console.log(`🔍 PARSE: Parsing filename: "${filename}"`);
+    // console.log(`🔍 PARSE: Filename length: ${filename.length}`);
 
     if (!filename || typeof filename !== 'string') {
-      console.log(`❌ PARSE: Invalid filename input`);
+      // console.log(`❌ PARSE: Invalid filename input`);
       return null;
     }
 
     const success = this.anitomy.parse(filename);
     if (!success) {
-      console.log(`❌ PARSE: Anitomy parsing failed`);
+      // console.log(`❌ PARSE: Anitomy parsing failed`);
       return null;
     }
 
     // Debug: Log the tokens to see what's being parsed
-    console.log(`🔍 PARSE: Tokens created:`, this.anitomy.tokens.map(t => ({
-      category: t.category,
-      content: t.content,
-      enclosed: t.enclosed
-    })));
+    // console.log(`🔍 PARSE: Tokens created:`, this.anitomy.tokens.map(t => ({
+    //   category: t.category,
+    //   content: t.content,
+    //   enclosed: t.enclosed
+    // })));
 
     const result = {
       // Basic information
@@ -72,13 +72,13 @@ class FilenameParser {
       }))
     };
 
-    console.log(`✅ PARSE: Successfully parsed filename. Key data:`, {
-      animeTitle: result.animeTitle,
-      episodeNumber: result.episodeNumber,
-      releaseGroup: result.releaseGroup,
-      videoResolution: result.videoResolution,
-      fileExtension: result.fileExtension
-    });
+    // console.log(`✅ PARSE: Successfully parsed filename. Key data:`, {
+    //   animeTitle: result.animeTitle,
+    //   episodeNumber: result.episodeNumber,
+    //   releaseGroup: result.releaseGroup,
+    //   videoResolution: result.videoResolution,
+    //   fileExtension: result.fileExtension
+    // });
 
     return result;
   }

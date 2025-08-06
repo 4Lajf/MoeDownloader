@@ -41,8 +41,6 @@ async function initDatabase() {
  * Create database tables
  */
 async function createTables() {
-	// Run migrations first
-	await runMigrations();
 	
 	// Whitelist table (modified to support AniList integration)
 	db.exec(`
@@ -223,7 +221,28 @@ async function createTables() {
 			download_status TEXT DEFAULT 'processed',
 			processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (whitelist_entry_id) REFERENCES whitelist (id) ON DELETE CASCADE,
-			UNIQUE(whitelist_entry_id, episode_number, anime_title)
+			UNIQUE(anime_title, episode_number)
+		)
+	`);
+
+	// Activity logs table (for user-relevant application events)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS activity_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			type TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT,
+			metadata TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`);
+
+	// Processed GUIDs table (for tracking RSS GUIDs to prevent reprocessing)
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS processed_guids (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			guid TEXT NOT NULL UNIQUE,
+			processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)
 	`);
 
@@ -242,6 +261,9 @@ async function createTables() {
 		CREATE INDEX IF NOT EXISTS idx_processed_files_whitelist_entry ON processed_files (whitelist_entry_id);
 		CREATE INDEX IF NOT EXISTS idx_processed_files_episode ON processed_files (whitelist_entry_id, episode_number);
 		CREATE INDEX IF NOT EXISTS idx_processed_files_anime_title ON processed_files (anime_title);
+		CREATE INDEX IF NOT EXISTS idx_activity_logs_type ON activity_logs (type);
+		CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs (created_at);
+		CREATE INDEX IF NOT EXISTS idx_processed_guids_guid ON processed_guids (guid);
 	`);
 
 	// Migrate existing anime_relations table to add anime title columns
@@ -270,13 +292,32 @@ async function createTables() {
 		['check_interval_minutes', '5'],
 		['downloads_directory', 'downloads'],
 		['max_concurrent_downloads', '3'],
-		['last_processed_id', '0']
+		['last_processed_id', '0'],
+		['theme', 'dark'],
+		// Download filtering settings
+		['disabled_fansub_groups', ''],
+		// OS Notifications settings
+		['enable_os_notifications', 'true'],
+		['enable_notification_download-completed', 'true'],
+		['enable_notification_download-failed', 'true'],
+		['enable_notification_download-started', 'true'],
+		['enable_notification_rss-processed', 'true'],
+		['enable_notification_new-episode-found', 'true'],
+		['enable_notification_anilist-sync-failed', 'true'],
+		// Tray settings
+		['hide_to_tray_on_close', 'true'],
+		['start_minimized_to_tray', 'false'],
+		// UI settings
+		['show_advanced_tabs_in_sidebar', 'false']
 	];
 
 	const insertConfig = db.prepare('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)');
 	for (const [key, value] of defaultConfig) {
 		insertConfig.run(key, value);
 	}
+
+	// Run migrations after tables are created
+	await runMigrations();
 }
 
 /**
@@ -318,8 +359,8 @@ const whitelistOperations = {
 	add(entry) {
 		try {
 			const stmt = db.prepare(`
-				INSERT INTO whitelist (title, keywords, exclude_keywords, quality, enabled, preferred_group) 
-				VALUES (?, ?, ?, ?, ?, ?)
+				INSERT INTO whitelist (title, keywords, exclude_keywords, quality, enabled, preferred_group, source_type, anilist_id, anilist_account_id, auto_sync, title_romaji, title_english, title_synonyms)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`);
 			const addResult = stmt.run(
 				entry.title,
@@ -327,7 +368,14 @@ const whitelistOperations = {
 				entry.exclude_keywords || '',
 				entry.quality || '1080p',
 				entry.enabled ? 1 : 0,
-				entry.preferred_group || 'any'
+				entry.preferred_group || 'any',
+				entry.source_type || 'manual',
+				entry.anilist_id || null,
+				entry.anilist_account_id || null,
+				entry.auto_sync ? 1 : 0,
+				entry.title_romaji || null,
+				entry.title_english || null,
+				entry.title_synonyms ? JSON.stringify(entry.title_synonyms) : null
 			);
 			return addResult;
 		} catch (error) {
@@ -346,9 +394,10 @@ const whitelistOperations = {
 	update(id, entry) {
 		try {
 			const stmt = db.prepare(`
-				UPDATE whitelist 
-				SET title = ?, keywords = ?, exclude_keywords = ?, quality = ?, enabled = ?, 
-					preferred_group = ?, updated_at = CURRENT_TIMESTAMP 
+				UPDATE whitelist
+				SET title = ?, keywords = ?, exclude_keywords = ?, quality = ?, enabled = ?,
+					preferred_group = ?, source_type = ?, anilist_id = ?, anilist_account_id = ?, auto_sync = ?,
+					title_romaji = ?, title_english = ?, title_synonyms = ?, updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
 			`);
 			const updateResult = stmt.run(
@@ -358,6 +407,13 @@ const whitelistOperations = {
 				entry.quality || '1080p',
 				entry.enabled ? 1 : 0,
 				entry.preferred_group || 'any',
+				entry.source_type || 'manual',
+				entry.anilist_id || null,
+				entry.anilist_account_id || null,
+				entry.auto_sync ? 1 : 0,
+				entry.title_romaji || null,
+				entry.title_english || null,
+				entry.title_synonyms ? JSON.stringify(entry.title_synonyms) : null,
 				id
 			);
 			return updateResult;
@@ -417,7 +473,7 @@ const rssOperations = {
 				const existing = existingStmt.get(guid);
 
 				if (existing) {
-					console.log(`📝 RSS DB: Entry already exists with ID: ${existing.id}`);
+					// console.log(`📝 RSS DB: Entry already exists with ID: ${existing.id}`);
 					return { lastInsertRowid: existing.id, changes: 0 };
 				}
 
@@ -689,6 +745,15 @@ const configOperations = {
 			config[row.key] = row.value;
 			return config;
 		}, {});
+	},
+
+	/**
+	 * Delete configuration value
+	 * @param {string} key
+	 */
+	delete(key) {
+		const stmt = db.prepare('DELETE FROM config WHERE key = ?');
+		return stmt.run(key);
 	}
 };
 
@@ -928,6 +993,20 @@ async function runMigrations() {
 			}
 		}
 
+		// Add alternative title columns for enhanced matching
+		const alternativeTitleColumns = [
+			{ name: 'title_romaji', type: 'TEXT' },
+			{ name: 'title_english', type: 'TEXT' },
+			{ name: 'title_synonyms', type: 'TEXT' } // JSON array of synonyms
+		];
+
+		for (const column of alternativeTitleColumns) {
+			if (!whitelistColumns.includes(column.name)) {
+				db.exec(`ALTER TABLE whitelist ADD COLUMN ${column.name} ${column.type}`);
+				console.log(`Added column ${column.name} to whitelist table`);
+			}
+		}
+
 		// Drop the unique constraint on title and recreate with new constraint
 		try {
 			// Check if we need to update the unique constraint
@@ -943,6 +1022,94 @@ async function runMigrations() {
 			}
 		} catch (error) {
 			console.log('Could not update whitelist unique constraint:', error.message);
+		}
+
+		// Migrate processed_files table to use global episode-based duplicate prevention
+		try {
+			const processedFilesInfo = db.prepare("PRAGMA table_info(processed_files)").all();
+			const processedFilesIndexes = db.prepare("PRAGMA index_list(processed_files)").all();
+
+			// Check if we have the old unique constraint (whitelist_entry_id, episode_number, anime_title)
+			const hasOldConstraint = processedFilesIndexes.some(idx =>
+				idx.unique === 1 && idx.name.includes('whitelist_entry_id')
+			);
+
+			if (hasOldConstraint) {
+				console.log('Migrating processed_files table to global episode-based duplicate prevention...');
+
+				// Create new table with updated constraint
+				db.exec(`
+					CREATE TABLE processed_files_new (
+						id INTEGER PRIMARY KEY AUTOINCREMENT,
+						whitelist_entry_id INTEGER NOT NULL,
+						original_filename TEXT NOT NULL,
+						final_title TEXT NOT NULL,
+						episode_number TEXT,
+						anime_title TEXT NOT NULL,
+						release_group TEXT,
+						video_resolution TEXT,
+						file_checksum TEXT,
+						torrent_link TEXT NOT NULL,
+						download_status TEXT DEFAULT 'processed',
+						processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+						FOREIGN KEY (whitelist_entry_id) REFERENCES whitelist (id) ON DELETE CASCADE,
+						UNIQUE(anime_title, episode_number)
+					)
+				`);
+
+				// Copy data, keeping only the first occurrence of each anime_title + episode_number combination
+				db.exec(`
+					INSERT INTO processed_files_new
+					SELECT * FROM processed_files
+					WHERE id IN (
+						SELECT MIN(id)
+						FROM processed_files
+						GROUP BY anime_title, episode_number
+					)
+				`);
+
+				// Drop old table and rename new one
+				db.exec('DROP TABLE processed_files');
+				db.exec('ALTER TABLE processed_files_new RENAME TO processed_files');
+
+				console.log('Successfully migrated processed_files table');
+			}
+		} catch (error) {
+			console.log('Could not migrate processed_files table:', error.message);
+		}
+
+		// Normalize existing anime titles in processed_files for consistent duplicate detection
+		try {
+			console.log('Normalizing anime titles in processed_files table...');
+
+			// Function to normalize titles (same as RSS processor)
+			const normalizeTitle = (title) => {
+				if (!title) return '';
+				return title
+					.toLowerCase()
+					.replace(/[^\w\s]/g, '') // Remove all punctuation
+					.replace(/\s+/g, ' ')    // Normalize whitespace
+					.trim();
+			};
+
+			// Get all processed files
+			const allFiles = db.prepare('SELECT id, anime_title FROM processed_files').all();
+
+			// Update each file with normalized title
+			const updateStmt = db.prepare('UPDATE processed_files SET anime_title = ? WHERE id = ?');
+
+			let normalizedCount = 0;
+			for (const file of allFiles) {
+				const normalizedTitle = normalizeTitle(file.anime_title);
+				if (normalizedTitle !== file.anime_title) {
+					updateStmt.run(normalizedTitle, file.id);
+					normalizedCount++;
+				}
+			}
+
+			console.log(`Successfully normalized ${normalizedCount} anime titles in processed_files table`);
+		} catch (error) {
+			console.log('Could not normalize anime titles:', error.message);
 		}
 
 	} catch (error) {
@@ -1153,20 +1320,19 @@ const processedFilesOperations = {
 	},
 
 	/**
-	 * Check if file was already processed
-	 * @param {number} whitelistEntryId
+	 * Check if file was already processed (globally across all groups)
 	 * @param {string} episodeNumber
-	 * @param {string} animeTitle
+	 * @param {string} animeTitle - Should be normalized title
 	 */
-	exists(whitelistEntryId, episodeNumber, animeTitle) {
+	exists(episodeNumber, animeTitle) {
 		try {
+			// Check both normalized and original titles for backward compatibility
 			const stmt = db.prepare(`
 				SELECT COUNT(*) as count FROM processed_files
-				WHERE whitelist_entry_id = ? AND episode_number = ? AND anime_title = ?
+				WHERE episode_number = ? AND anime_title = ?
 			`);
-			const result = stmt.get(whitelistEntryId, episodeNumber, animeTitle);
-			console.log(`🔍 DB: Checking processed files exists:`, {
-				whitelistEntryId,
+			const result = stmt.get(episodeNumber, animeTitle);
+			console.log(`🔍 DB: Checking processed files exists (global):`, {
 				episodeNumber,
 				animeTitle,
 				count: result.count,
@@ -1175,6 +1341,33 @@ const processedFilesOperations = {
 			return result.count > 0;
 		} catch (error) {
 			console.error(`❌ DB: Error checking processed files exists:`, error);
+			return false; // If there's an error, assume it doesn't exist to allow processing
+		}
+	},
+
+	/**
+	 * Check if file was already processed for specific whitelist entry (legacy method)
+	 * @param {number} whitelistEntryId
+	 * @param {string} episodeNumber
+	 * @param {string} animeTitle
+	 */
+	existsForEntry(whitelistEntryId, episodeNumber, animeTitle) {
+		try {
+			const stmt = db.prepare(`
+				SELECT COUNT(*) as count FROM processed_files
+				WHERE whitelist_entry_id = ? AND episode_number = ? AND anime_title = ?
+			`);
+			const result = stmt.get(whitelistEntryId, episodeNumber, animeTitle);
+			console.log(`🔍 DB: Checking processed files exists for entry:`, {
+				whitelistEntryId,
+				episodeNumber,
+				animeTitle,
+				count: result.count,
+				exists: result.count > 0
+			});
+			return result.count > 0;
+		} catch (error) {
+			console.error(`❌ DB: Error checking processed files exists for entry:`, error);
 			return false; // If there's an error, assume it doesn't exist to allow processing
 		}
 	},
@@ -1246,6 +1439,158 @@ const processedFilesOperations = {
 	}
 };
 
+/**
+ * Activity logs operations (for user-relevant application events)
+ */
+const activityLogsOperations = {
+	/**
+	 * Add activity log entry
+	 * @param {Object} data
+	 */
+	add(data) {
+		try {
+			const stmt = db.prepare(`
+				INSERT INTO activity_logs (type, title, description, metadata)
+				VALUES (?, ?, ?, ?)
+			`);
+			return stmt.run(
+				data.type,
+				data.title,
+				data.description || null,
+				data.metadata ? JSON.stringify(data.metadata) : null
+			);
+		} catch (error) {
+			console.error('❌ DB: Error adding activity log:', error);
+			throw error;
+		}
+	},
+
+	/**
+	 * Get recent activity logs
+	 * @param {number} limit
+	 * @param {string} type - Optional type filter
+	 */
+	getRecent(limit = 100, type = null) {
+		try {
+			let query = 'SELECT * FROM activity_logs';
+			let params = [];
+
+			if (type) {
+				query += ' WHERE type = ?';
+				params.push(type);
+			}
+
+			query += ' ORDER BY created_at DESC LIMIT ?';
+			params.push(limit);
+
+			const stmt = db.prepare(query);
+			const logs = stmt.all(...params);
+
+			// Parse metadata JSON
+			return logs.map(log => ({
+				...log,
+				metadata: log.metadata ? JSON.parse(log.metadata) : null
+			}));
+		} catch (error) {
+			console.error('❌ DB: Error getting activity logs:', error);
+			return [];
+		}
+	},
+
+	/**
+	 * Clear old activity logs (keep only recent ones)
+	 * @param {number} keepCount - Number of logs to keep
+	 */
+	cleanup(keepCount = 1000) {
+		try {
+			const stmt = db.prepare(`
+				DELETE FROM activity_logs
+				WHERE id NOT IN (
+					SELECT id FROM activity_logs
+					ORDER BY created_at DESC
+					LIMIT ?
+				)
+			`);
+			return stmt.run(keepCount);
+		} catch (error) {
+			console.error('❌ DB: Error cleaning up activity logs:', error);
+			throw error;
+		}
+	},
+
+	/**
+	 * Clear all activity logs
+	 */
+	clear() {
+		try {
+			const stmt = db.prepare('DELETE FROM activity_logs');
+			return stmt.run();
+		} catch (error) {
+			console.error('❌ DB: Error clearing activity logs:', error);
+			throw error;
+		}
+	}
+};
+
+/**
+ * Processed GUIDs operations (for RSS GUID tracking)
+ */
+const processedGuidsOperations = {
+	/**
+	 * Check if GUID was already processed
+	 * @param {string} guid
+	 */
+	exists(guid) {
+		try {
+			const stmt = db.prepare('SELECT 1 FROM processed_guids WHERE guid = ?');
+			return stmt.get(guid) !== undefined;
+		} catch (error) {
+			console.error('❌ DB: Error checking processed GUID:', error);
+			return false;
+		}
+	},
+
+	/**
+	 * Add processed GUID
+	 * @param {string} guid
+	 */
+	add(guid) {
+		try {
+			const stmt = db.prepare('INSERT OR IGNORE INTO processed_guids (guid) VALUES (?)');
+			return stmt.run(guid);
+		} catch (error) {
+			console.error('❌ DB: Error adding processed GUID:', error);
+			throw error;
+		}
+	},
+
+	/**
+	 * Get all processed GUIDs
+	 */
+	getAll() {
+		try {
+			const stmt = db.prepare('SELECT * FROM processed_guids ORDER BY processed_at DESC');
+			return stmt.all();
+		} catch (error) {
+			console.error('❌ DB: Error getting processed GUIDs:', error);
+			return [];
+		}
+	},
+
+	/**
+	 * Clear all processed GUIDs
+	 */
+	clear() {
+		try {
+			const stmt = db.prepare('DELETE FROM processed_guids');
+			return stmt.run();
+		} catch (error) {
+			console.error('❌ DB: Error clearing processed GUIDs:', error);
+			throw error;
+		}
+	}
+};
+
 // Export all functions and operations
 module.exports = {
 	initDatabase,
@@ -1260,5 +1605,7 @@ module.exports = {
 	anilistAutoListOperations,
 	anilistAnimeCacheOperations,
 	animeRelationsOperations,
-	processedFilesOperations
+	processedFilesOperations,
+	activityLogsOperations,
+	processedGuidsOperations
 };

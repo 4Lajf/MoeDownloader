@@ -24,10 +24,27 @@ function createAniListSyncService(notificationService) {
       try {
         anilistService = createAniListService();
         await anilistService.initialize();
-        
+
         // Start periodic sync
         this.startPeriodicSync();
-        
+
+        // Perform initial sync on app launch if user is authenticated and has enabled lists
+        if (anilistService.isAuthenticated()) {
+          const enabledLists = anilistAutoListOperations.getEnabled();
+          if (enabledLists.length > 0) {
+            console.log('Performing initial AniList sync on app launch...');
+            // Run sync in background without blocking initialization
+            setTimeout(async () => {
+              try {
+                await this.syncAllLists();
+                console.log('Initial AniList sync completed');
+              } catch (error) {
+                console.error('Initial AniList sync failed:', error);
+              }
+            }, 2000); // Wait 2 seconds after app initialization
+          }
+        }
+
         console.log('AniList sync service initialized');
         return { success: true };
       } catch (error) {
@@ -107,23 +124,15 @@ function createAniListSyncService(notificationService) {
         }
 
         console.log(`AniList sync completed: ${totalSynced} entries synced, ${totalErrors} errors`);
-        
+
         if (notificationService && totalSynced > 0) {
-          notificationService.show({
-            title: 'AniList Sync Complete',
-            body: `Synced ${totalSynced} anime entries from your lists`,
-            type: 'info'
-          });
+          notificationService.anilistSyncCompleted({ totalSynced, totalErrors });
         }
 
       } catch (error) {
         console.error('AniList sync failed:', error);
         if (notificationService) {
-          notificationService.show({
-            title: 'AniList Sync Failed',
-            body: 'Failed to sync your AniList data',
-            type: 'error'
-          });
+          notificationService.anilistSyncFailed(error.message || 'Unknown error');
         }
       } finally {
         isSyncing = false;
@@ -187,12 +196,15 @@ function createAniListSyncService(notificationService) {
       // Cache anime data
       await this.cacheAnimeData(media);
 
-      // Get the best title to use for whitelist
+      // Get the best title to use for whitelist (romaji preferred)
       const title = this.getBestTitle(media);
       if (!title) {
         console.log(`No suitable title found for anime ${media.id}`);
         return false;
       }
+
+      // Get all title variants for enhanced matching
+      const titleVariants = this.getAllTitleVariants(media);
 
       // Check if this entry already exists in whitelist
       const existingEntry = whitelistOperations.getAll().find(w => 
@@ -202,20 +214,32 @@ function createAniListSyncService(notificationService) {
       );
 
       if (existingEntry) {
-        // Update existing entry if needed
+        // Update existing entry if needed, but preserve user's quality and preferred_group settings
         const updates = {
           title: title,
-          quality: listConfig.quality,
-          preferred_group: listConfig.preferred_group,
+          // Only update quality and preferred_group if they match the default list config values
+          // This preserves user customizations
+          quality: existingEntry.quality || listConfig.quality,
+          preferred_group: existingEntry.preferred_group || listConfig.preferred_group,
           enabled: 1,
           auto_sync: 1,
+          source_type: 'anilist',
+          anilist_id: media.id,
+          anilist_account_id: listConfig.account_id,
+          // Store all title variants for enhanced matching
+          title_romaji: titleVariants.romaji,
+          title_english: titleVariants.english,
+          title_synonyms: titleVariants.synonyms,
           updated_at: new Date().toISOString()
         };
 
-        // Check if update is needed
-        const needsUpdate = Object.keys(updates).some(key => 
-          existingEntry[key] !== updates[key]
-        );
+        // Check if update is needed (excluding quality and preferred_group from comparison to preserve user settings)
+        const needsUpdate = existingEntry.title !== title ||
+                           existingEntry.enabled !== 1 ||
+                           existingEntry.auto_sync !== 1 ||
+                           existingEntry.title_romaji !== titleVariants.romaji ||
+                           existingEntry.title_english !== titleVariants.english ||
+                           JSON.stringify(existingEntry.title_synonyms) !== JSON.stringify(titleVariants.synonyms);
 
         if (needsUpdate) {
           whitelistOperations.update(existingEntry.id, updates);
@@ -236,10 +260,14 @@ function createAniListSyncService(notificationService) {
             source_type: 'anilist',
             anilist_id: media.id,
             anilist_account_id: listConfig.account_id,
-            auto_sync: true
+            auto_sync: true,
+            // Store all title variants for enhanced matching
+            title_romaji: titleVariants.romaji,
+            title_english: titleVariants.english,
+            title_synonyms: titleVariants.synonyms
           });
-          
-          console.log(`Added whitelist entry for: ${title}`);
+
+          console.log(`Added whitelist entry for: ${title} (romaji: ${titleVariants.romaji}, english: ${titleVariants.english})`);
           return true;
         } catch (error) {
           if (error.message.includes('UNIQUE constraint failed')) {
@@ -288,9 +316,23 @@ function createAniListSyncService(notificationService) {
      */
     getBestTitle(media) {
       const titles = media.title || {};
-      
-      // Prefer English title, then romaji, then native
-      return titles.english || titles.romaji || titles.native || null;
+
+      // Prefer romaji title first, then English, then native
+      return titles.romaji || titles.english || titles.native || null;
+    },
+
+    /**
+     * Get all title variants for enhanced matching
+     * @param {Object} media - AniList media object
+     * @returns {Object} - Object containing all title variants
+     */
+    getAllTitleVariants(media) {
+      const titles = media.title || {};
+      return {
+        romaji: titles.romaji || null,
+        english: titles.english || null,
+        synonyms: media.synonyms || []
+      };
     },
 
     /**

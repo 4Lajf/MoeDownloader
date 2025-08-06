@@ -8,6 +8,52 @@ export const view = writable(null);
 // Application state
 export const isInitialized = writable(false);
 export const initError = writable(null);
+export const loadingState = writable({
+	isLoading: true,
+	message: 'Loading MoeDownloader...'
+});
+
+// Loading state helpers
+export const setLoadingMessage = (message: string) => {
+	loadingState.update(state => ({ ...state, message }));
+};
+
+export const hideLoading = () => {
+	loadingState.update(state => ({ ...state, isLoading: false }));
+};
+
+// Theme management
+export const theme = writable<'light' | 'dark'>('dark');
+
+// Detect system theme preference
+export const getSystemTheme = (): 'light' | 'dark' => {
+	if (typeof window !== 'undefined' && window.matchMedia) {
+		return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+	}
+	return 'dark'; // Fallback to dark theme
+};
+
+// Theme utilities
+export const setTheme = (newTheme: 'light' | 'dark') => {
+	theme.set(newTheme);
+
+	// Apply theme class to document
+	if (typeof document !== 'undefined') {
+		if (newTheme === 'dark') {
+			document.documentElement.classList.add('dark');
+		} else {
+			document.documentElement.classList.remove('dark');
+		}
+	}
+};
+
+export const toggleTheme = () => {
+	theme.update(currentTheme => {
+		const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+		setTheme(newTheme);
+		return newTheme;
+	});
+};
 
 // RSS monitoring state
 export const isRSSMonitoring = writable(false);

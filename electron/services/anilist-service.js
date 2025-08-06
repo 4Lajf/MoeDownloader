@@ -58,21 +58,22 @@ function createAniListService() {
 
     /**
      * Get authentication URL for OAuth flow using Implicit Grant
+     * Note: For Auth Pin flow, the redirect_uri should be set to https://anilist.co/api/v2/oauth/pin in the AniList app settings
      * @returns {string} - Authentication URL
      */
     getAuthUrl() {
       const clientId = '29090'; // Pre-configured client ID
       const params = new URLSearchParams({
         client_id: clientId,
-        response_type: 'token' // Use token for implicit grant
+        response_type: 'token' // Use implicit grant
       });
 
       return `${ANILIST_AUTH_URL}?${params.toString()}`;
     },
 
     /**
-     * Store access token from implicit grant
-     * @param {string} token - Access token from OAuth callback
+     * Store access token from Auth Pin flow (Implicit Grant)
+     * @param {string} token - Access token from Auth Pin page
      * @returns {Object} - Success response with user info
      */
     async storeAccessToken(token) {
@@ -87,6 +88,27 @@ function createAniListService() {
           currentUser = user;
           configOperations.set('anilist_user_id', user.id.toString());
           configOperations.set('anilist_username', user.name);
+
+          // Create or update account entry in database
+          const { anilistAccountOperations } = require('../lib/database');
+          try {
+            await anilistAccountOperations.upsert({
+              user_id: user.id,
+              username: user.name,
+              access_token: accessToken,
+              avatar_url: user.avatar?.large || user.avatar?.medium || null,
+              banner_url: user.bannerImage || null,
+              about: user.about || null,
+              anime_count: user.statistics?.anime?.count || 0,
+              mean_score: user.statistics?.anime?.meanScore || 0,
+              minutes_watched: user.statistics?.anime?.minutesWatched || 0,
+              is_active: true
+            });
+            console.log(`Created/updated account entry for user: ${user.name}`);
+          } catch (dbError) {
+            console.error('Failed to create account entry:', dbError);
+            // Don't fail the authentication if account creation fails
+          }
         }
 
         return {
@@ -422,11 +444,29 @@ function createAniListService() {
      * Logout user
      */
     logout() {
+      // Clear all AniList synced entries from whitelist
+      const { whitelistOperations } = require('../lib/database');
+      try {
+        const syncedEntries = whitelistOperations.getAll().filter(entry =>
+          entry.source_type === 'anilist' && entry.auto_sync
+        );
+
+        for (const entry of syncedEntries) {
+          whitelistOperations.delete(entry.id);
+        }
+
+        console.log(`Cleared ${syncedEntries.length} AniList synced entries from whitelist`);
+      } catch (error) {
+        console.error('Failed to clear synced entries on logout:', error);
+      }
+
       accessToken = null;
       currentUser = null;
       configOperations.delete('anilist_access_token');
       configOperations.delete('anilist_user_id');
       configOperations.delete('anilist_username');
+
+      console.log('AniList logout completed');
     }
   };
 

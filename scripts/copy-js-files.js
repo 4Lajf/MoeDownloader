@@ -52,6 +52,24 @@ function copyJSFiles() {
       }
     });
   }
+
+  // Copy loader.html to dist/electron
+  const loaderHtmlSource = path.join(sourceDir, 'loader.html');
+  const loaderHtmlDist = path.join(distDir, 'loader.html');
+
+  if (fs.existsSync(loaderHtmlSource)) {
+    fs.copyFileSync(loaderHtmlSource, loaderHtmlDist);
+    console.log('Copied: loader.html');
+  }
+
+  // Copy loading.gif to dist/electron
+  const loadingGifSource = path.join(sourceDir, 'loading.gif');
+  const loadingGifDist = path.join(distDir, 'loading.gif');
+
+  if (fs.existsSync(loadingGifSource)) {
+    fs.copyFileSync(loadingGifSource, loadingGifDist);
+    console.log('Copied: loading.gif');
+  }
 }
 
 if (require.main === module) {

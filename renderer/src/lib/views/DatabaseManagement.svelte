@@ -7,6 +7,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Separator } from '$lib/components/ui/separator';
+	import { Select, SelectContent, SelectItem, SelectTrigger } from '$lib/components/ui/select';
 	import {
 		Trash2,
 		RefreshCw,
@@ -16,14 +17,24 @@
 		Film,
 		Database
 	} from 'lucide-svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ipc from '../../ipc';
 
-	let processedFiles: any[] = [];
-	let filteredFiles: any[] = [];
-	let isLoading = false;
-	let searchQuery = '';
-	let selectedWhitelistEntry = '';
-	let whitelistEntries: any[] = [];
+	let processedFiles = $state<any[]>([]);
+	let filteredFiles = $state<any[]>([]);
+	let isLoading = $state(false);
+	let searchQuery = $state('');
+	let selectedWhitelistEntry = $state('');
+	let whitelistEntries = $state<any[]>([]);
+	let processedGuidsCount = $state(0);
+
+	// Confirmation dialog state
+	let confirmDialog = $state({
+		open: false,
+		title: '',
+		description: '',
+		onConfirm: () => {}
+	});
 
 	// Statistics
 	let stats = {
@@ -43,10 +54,13 @@
 			
 			// Load processed files
 			processedFiles = await ipc.getProcessedFiles();
-			
+
 			// Load whitelist entries for filtering
 			whitelistEntries = await ipc.getWhitelist();
-			
+
+			// Load processed GUIDs count
+			processedGuidsCount = await ipc.getProcessedGuidsCount();
+
 			// Calculate statistics
 			calculateStats();
 			
@@ -91,11 +105,16 @@
 		});
 	}
 
-	async function deleteProcessedFile(id: number) {
-		if (!confirm('Are you sure you want to delete this processed file record? This will allow it to be downloaded again.')) {
-			return;
-		}
+	function confirmDeleteProcessedFile(id: number) {
+		confirmDialog = {
+			open: true,
+			title: 'Delete Processed File',
+			description: 'Are you sure you want to delete this processed file record? This will allow it to be downloaded again.',
+			onConfirm: () => deleteProcessedFile(id)
+		};
+	}
 
+	async function deleteProcessedFile(id: number) {
 		try {
 			await ipc.deleteProcessedFile(id);
 			toast.success('Processed file deleted', {
@@ -112,11 +131,16 @@
 		}
 	}
 
-	async function clearAllProcessedFiles() {
-		if (!confirm('Are you sure you want to clear ALL processed file records? This will allow all files to be downloaded again.')) {
-			return;
-		}
+	function confirmClearAllProcessedFiles() {
+		confirmDialog = {
+			open: true,
+			title: 'Clear All Processed Files',
+			description: 'Are you sure you want to clear ALL processed file records? This will allow all files to be downloaded again.',
+			onConfirm: () => clearAllProcessedFiles()
+		};
+	}
 
+	async function clearAllProcessedFiles() {
 		try {
 			await ipc.clearAllProcessedFiles();
 			toast.success('All processed files cleared', {
@@ -133,12 +157,18 @@
 		}
 	}
 
+	function confirmClearByWhitelistEntry(whitelistEntryId: number) {
+		const entry = whitelistEntries.find(e => e.id === whitelistEntryId);
+		confirmDialog = {
+			open: true,
+			title: 'Clear Processed Files',
+			description: `Are you sure you want to clear all processed files for "${entry?.title}"? This will allow all episodes to be downloaded again.`,
+			onConfirm: () => clearByWhitelistEntry(whitelistEntryId)
+		};
+	}
+
 	async function clearByWhitelistEntry(whitelistEntryId: number) {
 		const entry = whitelistEntries.find(e => e.id === whitelistEntryId);
-		if (!confirm(`Are you sure you want to clear all processed files for "${entry?.title}"? This will allow all episodes to be downloaded again.`)) {
-			return;
-		}
-
 		try {
 			await ipc.clearProcessedFilesByWhitelistEntry(whitelistEntryId);
 			toast.success('Processed files cleared', {
@@ -172,6 +202,33 @@
 		}
 	}
 
+	function confirmClearProcessedGuids() {
+		confirmDialog = {
+			open: true,
+			title: 'Clear Processed GUIDs',
+			description: 'Are you sure you want to clear all processed RSS GUIDs? This will allow all RSS items to be processed again.',
+			onConfirm: () => clearProcessedGuids()
+		};
+	}
+
+	async function clearProcessedGuids() {
+		try {
+			await ipc.clearProcessedGuids();
+			// Refresh the count after clearing
+			processedGuidsCount = await ipc.getProcessedGuidsCount();
+			toast.success('Processed GUIDs cleared', {
+				description: 'All RSS items can now be processed again.',
+				duration: 3000
+			});
+		} catch (error: any) {
+			console.error('Error clearing processed GUIDs:', error);
+			toast.error('Failed to clear GUIDs', {
+				description: `Error: ${error?.message || 'Unknown error'}`,
+				duration: 5000
+			});
+		}
+	}
+
 	function formatDate(dateString: string) {
 		return new Date(dateString).toLocaleString();
 	}
@@ -186,10 +243,10 @@
 		}
 	}
 
-	// Reactive statements for filtering
-	$: {
+	// Reactive effect for filtering
+	$effect(() => {
 		applyFilters();
-	}
+	});
 </script>
 
 <div class="space-y-6 p-6">
@@ -256,6 +313,13 @@
 		</Card>
 	</div>
 
+	<ConfirmDialog
+		bind:open={confirmDialog.open}
+		title={confirmDialog.title}
+		description={confirmDialog.description}
+		onConfirm={confirmDialog.onConfirm}
+	/>
+
 	<!-- Filters and Actions -->
 	<Card>
 		<CardHeader>
@@ -281,38 +345,52 @@
 
 				<div class="space-y-2">
 					<Label for="whitelist-filter">Filter by Whitelist Entry</Label>
-					<select
-						id="whitelist-filter"
-						bind:value={selectedWhitelistEntry}
-						class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+					<Select
+						type="single"
+						value={selectedWhitelistEntry}
+						onValueChange={(value) => selectedWhitelistEntry = value || ''}
 					>
-						<option value="">All entries</option>
-						{#each whitelistEntries as entry}
-							<option value={entry.id.toString()}>{entry.title}</option>
-						{/each}
-					</select>
+						<SelectTrigger class="w-full">
+							{selectedWhitelistEntry ?
+								whitelistEntries.find(e => e.id.toString() === selectedWhitelistEntry)?.title || 'Select entry'
+								: 'All entries'}
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="">All entries</SelectItem>
+							{#each whitelistEntries as entry (entry.id)}
+								<SelectItem value={entry.id.toString()}>
+									{entry.title}
+								</SelectItem>
+							{/each}
+						</SelectContent>
+					</Select>
 				</div>
 			</div>
 
 			<Separator />
 
 			<div class="flex flex-wrap gap-2">
-				<Button variant="destructive" onclick={clearAllProcessedFiles}>
+				<Button variant="destructive" onclick={confirmClearAllProcessedFiles}>
 					<Trash2 class="w-4 h-4 mr-2" />
 					Clear All Files
+				</Button>
+
+				<Button variant="destructive" onclick={confirmClearProcessedGuids}>
+					<Trash2 class="w-4 h-4 mr-2" />
+					Clear RSS GUIDs ({processedGuidsCount})
 				</Button>
 
 				{#if selectedWhitelistEntry}
 					<Button
 						variant="outline"
-						onclick={() => clearByWhitelistEntry(parseInt(selectedWhitelistEntry))}
+						onclick={() => confirmClearByWhitelistEntry(parseInt(selectedWhitelistEntry))}
 					>
 						<Trash2 class="w-4 h-4 mr-2" />
 						Clear Selected Entry
 					</Button>
 				{/if}
 
-				<Button variant="secondary" onclick={debugProcessedFiles}>
+				<Button variant="info" onclick={debugProcessedFiles}>
 					<Database class="w-4 h-4 mr-2" />
 					Debug Database
 				</Button>
@@ -364,7 +442,7 @@
 										size="sm"
 										variant="ghost"
 										class="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-										onclick={() => deleteProcessedFile(file.id)}
+										onclick={() => confirmDeleteProcessedFile(file.id)}
 									>
 										<Trash2 class="w-4 h-4" />
 									</Button>

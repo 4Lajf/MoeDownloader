@@ -1,17 +1,17 @@
 {
   "version": "1.0",
-  "last_updated": "2025-08-05T15:28:35.700Z",
+  "last_updated": "2025-08-06T22:54:51.107Z",
   "description": "User-specific title overrides for MoeDownloader",
   "overrides": {
     "exact_match": {},
     "episode_mappings": [
       {
         "source_title": "Dainanaoji",
-        "source_episode_start": 13,
-        "source_episode_end": 9999,
-        "dest_title": "Dainanaoji Season 2",
-        "dest_episode_start": 1,
-        "dest_episode_end": 12,
+        "source_episode_start": 1,
+        "source_episode_end": 13,
+        "dest_title": "Tensei shitara Dai nana Ouji Datta node, Kimama ni Majutsu wo Kiwamemasu 2nd Season",
+        "dest_episode_start": 14,
+        "dest_episode_end": 999,
         "description": ""
       }
     ]

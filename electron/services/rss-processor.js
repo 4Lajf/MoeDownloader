@@ -6,13 +6,16 @@ const {
   rssOperations,
   configOperations,
   anilistAnimeCacheOperations,
-  processedFilesOperations
+  processedFilesOperations,
+  processedGuidsOperations
 } = require("../lib/database");
 const { parseFilename } = require('../lib/filename-parser');
 const { createAnimeRelationsManager } = require('./anime-relations');
 const { createTitleOverridesManager } = require('./title-overrides');
+const { ALLOWED_FANSUB_GROUPS } = require('../lib/constants');
+const { getDatabase } = require('../lib/database');
 
-function createRSSProcessor(notificationService = null, anilistService = null) {
+function createRSSProcessor(notificationService = null, anilistService = null, activityLogger = null) {
   let animeRelationsManager = null;
   let titleOverridesManager = null;
 
@@ -25,38 +28,324 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
         titleOverridesManager = createTitleOverridesManager();
         await titleOverridesManager.initialize();
 
-        // Debug: Show what user overrides are loaded at startup
-        const userOverridesData = titleOverridesManager.getUserOverridesData();
-        console.log('🔍 RSS PROCESSOR STARTUP: User title overrides status:');
-        if (userOverridesData && userOverridesData.overrides) {
-          if (userOverridesData.overrides.exact_match) {
-            const exactMatches = Object.entries(userOverridesData.overrides.exact_match);
-            console.log(`  📝 Exact matches loaded: ${exactMatches.length}`);
-            exactMatches.forEach(([original, override]) => {
-              console.log(`    "${original}" -> "${override}"`);
-            });
-          } else {
-            console.log('  ⚠️  No exact matches found in user overrides');
-          }
-
-          if (userOverridesData.overrides.episode_mappings) {
-            console.log(`  📺 Episode mappings loaded: ${userOverridesData.overrides.episode_mappings.length}`);
-          } else {
-            console.log('  ⚠️  No episode mappings found in user overrides');
-          }
-        } else {
-          console.log('  ❌ No user overrides data loaded');
-        }
-
-        console.log('RSS processor initialized with anime relations and title overrides support');
+        console.log('RSS processor initialized');
       } catch (error) {
         console.error('Failed to initialize RSS processor:', error);
       }
     },
+
+
+
+    /**
+     * Check if a fansub group is globally blacklisted
+     * @param {string} releaseGroup - The release group name
+     * @param {string} preferredGroup - The preferred group from whitelist entry (for override)
+     * @returns {boolean} - True if group is blacklisted and not overridden
+     */
+    isGroupBlacklisted(releaseGroup, preferredGroup = null) {
+      try {
+        if (!releaseGroup) return false;
+
+        const disabledGroups = configOperations.get('disabled_fansub_groups') || '';
+        if (!disabledGroups) return false;
+
+        const blacklistedGroups = disabledGroups.split(',').map(g => g.trim().toLowerCase()).filter(g => g);
+        const isBlacklisted = blacklistedGroups.includes(releaseGroup.toLowerCase());
+
+        // Check for manual override - if the whitelist entry specifically sets this group, allow it
+        if (isBlacklisted && preferredGroup && preferredGroup !== 'any') {
+          const isOverridden = preferredGroup.toLowerCase() === releaseGroup.toLowerCase();
+          if (isOverridden) {
+            console.log(`🔓 RSS: Group "${releaseGroup}" is blacklisted but overridden by whitelist entry`);
+            return false;
+          }
+        }
+
+        if (isBlacklisted) {
+          console.log(`🚫 RSS: Group "${releaseGroup}" is globally blacklisted`);
+        }
+
+        return isBlacklisted;
+      } catch (error) {
+        console.error('❌ RSS: Error checking group blacklist:', error);
+        return false; // If there's an error, don't filter out
+      }
+    },
+
+    /**
+     * Check if a fansub group is in the allowed list
+     * @param {string} releaseGroup - The release group name
+     * @returns {boolean} - True if group is allowed
+     */
+    isGroupAllowed(releaseGroup) {
+      if (!releaseGroup) {
+        return false;
+      }
+
+      // Check if the group is in our allowed list
+      const isAllowed = ALLOWED_FANSUB_GROUPS.includes(releaseGroup);
+
+      return isAllowed;
+    },
+
+    /**
+     * Normalize anime title for consistent duplicate detection
+     * @param {string} title - The anime title to normalize
+     * @returns {string} - Normalized title
+     */
+    normalizeAnimeTitle(title) {
+      if (!title) return '';
+
+      // Remove punctuation, convert to lowercase, normalize whitespace
+      return title
+        .toLowerCase()
+        .replace(/[^\w\s]/g, '') // Remove all punctuation
+        .replace(/\s+/g, ' ')    // Normalize whitespace
+        .trim();
+    },
+
+    /**
+     * Get all possible title variations for an anime (including English title and synonyms)
+     * @param {string} animeTitle - The parsed anime title
+     * @param {Object} whitelistEntry - The matched whitelist entry
+     * @returns {Array<string>} - Array of normalized title variations
+     */
+    getAnimeTitleVariations(animeTitle, whitelistEntry) {
+      const variations = new Set();
+
+      // Add the parsed title
+      if (animeTitle) {
+        variations.add(this.normalizeAnimeTitle(animeTitle));
+      }
+
+      // Add whitelist entry title
+      if (whitelistEntry?.title) {
+        variations.add(this.normalizeAnimeTitle(whitelistEntry.title));
+      }
+
+      // If this is an AniList entry, get cached anime data for more title variations
+      if (whitelistEntry?.source_type === 'anilist' && whitelistEntry?.anilist_id) {
+        try {
+          const cachedAnime = anilistAnimeCacheOperations.getByAnilistId(whitelistEntry.anilist_id);
+          if (cachedAnime && cachedAnime.anime_data && cachedAnime.anime_data !== 'undefined') {
+            const animeData = JSON.parse(cachedAnime.anime_data);
+
+            // Add romaji title
+            if (animeData.title?.romaji) {
+              variations.add(this.normalizeAnimeTitle(animeData.title.romaji));
+            }
+
+            // Add English title
+            if (animeData.title?.english) {
+              variations.add(this.normalizeAnimeTitle(animeData.title.english));
+            }
+
+            // Add native title
+            if (animeData.title?.native) {
+              variations.add(this.normalizeAnimeTitle(animeData.title.native));
+            }
+
+            // Add synonyms
+            if (animeData.synonyms && Array.isArray(animeData.synonyms)) {
+              animeData.synonyms.forEach(synonym => {
+                if (synonym) {
+                  variations.add(this.normalizeAnimeTitle(synonym));
+                }
+              });
+            }
+          }
+        } catch (error) {
+          console.log(`⚠️  RSS: Could not get AniList title variations for AniList ID ${whitelistEntry.anilist_id}:`, error.message);
+          console.log(`💡 RSS: This might be due to corrupted cache data. Consider refreshing AniList cache.`);
+        }
+      }
+
+      return Array.from(variations).filter(title => title.length > 0);
+    },
+
+    /**
+     * Check if episode exists using any title variation
+     * @param {string} episodeNumber - Episode number
+     * @param {Array<string>} titleVariations - Array of normalized title variations
+     * @returns {boolean} - True if episode exists for any title variation
+     */
+    checkEpisodeExistsAnyVariation(episodeNumber, titleVariations) {
+      for (const titleVariation of titleVariations) {
+        if (processedFilesOperations.exists(episodeNumber, titleVariation)) {
+          console.log(`🔍 RSS: Found existing episode for title variation: "${titleVariation}"`);
+          return true;
+        }
+      }
+      return false;
+    },
+
+    /**
+     * Check if episode is queued using any title variation
+     * @param {string} episodeNumber - Episode number
+     * @param {Array<string>} titleVariations - Array of normalized title variations
+     * @returns {Object|null} - Existing download object if found, null otherwise
+     */
+    checkEpisodeQueuedAnyVariation(episodeNumber, titleVariations) {
+      const allDownloads = downloadOperations.getAll();
+
+      for (const download of allDownloads) {
+        if (download.status !== 'queued' && download.status !== 'downloading') {
+          continue;
+        }
+
+        const existingParsedData = parseFilename(download.torrent_title);
+        const existingEpisodeNumber = existingParsedData?.episodeNumber || '';
+        const existingAnimeTitle = existingParsedData?.animeTitle || '';
+
+        if (existingEpisodeNumber === episodeNumber) {
+          const normalizedExistingTitle = this.normalizeAnimeTitle(existingAnimeTitle);
+
+          // Check if any of our title variations match the existing download
+          for (const titleVariation of titleVariations) {
+            if (titleVariation === normalizedExistingTitle) {
+              console.log(`🔍 RSS: Found queued episode for title variation: "${titleVariation}" (existing: "${normalizedExistingTitle}")`);
+              return download;
+            }
+          }
+        }
+      }
+
+      return null;
+    },
+
+    /**
+     * Get the highest episode number already processed or queued for an anime
+     * @param {Array<string>} titleVariations - Array of normalized title variations
+     * @returns {number} - Highest episode number found, or 0 if none
+     */
+    getHighestProcessedEpisode(titleVariations) {
+      let highestEpisode = 0;
+
+      // Check processed files database
+      const db = getDatabase();
+      for (const titleVariation of titleVariations) {
+        try {
+          const stmt = db.prepare(`
+            SELECT episode_number FROM processed_files
+            WHERE anime_title = ? AND episode_number IS NOT NULL
+            ORDER BY CAST(episode_number AS INTEGER) DESC
+            LIMIT 1
+          `);
+          const result = stmt.get(titleVariation);
+          if (result && result.episode_number) {
+            const episodeNum = parseInt(result.episode_number) || 0;
+            highestEpisode = Math.max(highestEpisode, episodeNum);
+          }
+        } catch (error) {
+          console.log(`⚠️  RSS: Error checking processed episodes for "${titleVariation}":`, error.message);
+        }
+      }
+
+      // Check queued downloads
+      const allDownloads = downloadOperations.getAll();
+      for (const download of allDownloads) {
+        if (download.status !== 'queued' && download.status !== 'downloading') {
+          continue;
+        }
+
+        const existingParsedData = parseFilename(download.torrent_title);
+        const existingEpisodeNumber = existingParsedData?.episodeNumber || '';
+        const existingAnimeTitle = existingParsedData?.animeTitle || '';
+        const normalizedExistingTitle = this.normalizeAnimeTitle(existingAnimeTitle);
+
+        // Check if any of our title variations match the existing download
+        for (const titleVariation of titleVariations) {
+          if (titleVariation === normalizedExistingTitle && existingEpisodeNumber) {
+            const episodeNum = parseInt(existingEpisodeNumber) || 0;
+            highestEpisode = Math.max(highestEpisode, episodeNum);
+            break;
+          }
+        }
+      }
+
+      return highestEpisode;
+    },
+
+    /**
+     * Select the latest episode for each anime from download candidates
+     * Only selects episodes that are newer than what's already processed/queued
+     * @param {Array} candidates - Array of download candidates
+     * @returns {Array} - Array of selected candidates (latest episode per anime)
+     */
+    selectLatestEpisodes(candidates) {
+      if (candidates.length === 0) return [];
+
+      // Group candidates by normalized anime title
+      const animeGroups = new Map();
+
+      for (const candidate of candidates) {
+        const key = candidate.primaryNormalizedTitle;
+        if (!animeGroups.has(key)) {
+          animeGroups.set(key, []);
+        }
+        animeGroups.get(key).push(candidate);
+      }
+
+      const selectedCandidates = [];
+
+      // For each anime, select the candidate with the highest episode number
+      // that's newer than what's already processed/queued
+      for (const [animeTitle, animeCandidates] of animeGroups) {
+        console.log(`🎯 RSS: Selecting from ${animeCandidates.length} candidates for "${animeTitle}"`);
+
+        // Get the highest episode already processed/queued for this anime
+        const titleVariations = animeCandidates[0].titleVariations;
+        const highestProcessedEpisode = this.getHighestProcessedEpisode(titleVariations);
+
+        console.log(`📊 RSS: Checking episode progression for "${animeTitle}"`);
+        console.log(`📊 RSS: Title variations being checked:`, titleVariations);
+        console.log(`📊 RSS: Highest processed episode: ${highestProcessedEpisode}`);
+        console.log(`📊 RSS: Available candidates:`, animeCandidates.map(c => `Episode ${c.episodeNumber} [${c.releaseGroup}]`));
+
+        // Filter candidates to only include episodes newer than what's already processed
+        const validCandidates = animeCandidates.filter(candidate => {
+          const episodeNum = parseInt(candidate.episodeNumber) || 0;
+          const isNewer = episodeNum > highestProcessedEpisode;
+
+          if (!isNewer && highestProcessedEpisode > 0) {
+            console.log(`⏭️  RSS: Skipping Episode ${candidate.episodeNumber} [${candidate.releaseGroup}] (not newer than processed episode ${highestProcessedEpisode})`);
+          }
+
+          return isNewer;
+        });
+
+        if (validCandidates.length === 0) {
+          console.log(`⏭️  RSS: No new episodes found for "${animeTitle}" (all episodes are older than or equal to processed episodes)`);
+          continue;
+        }
+
+        // Sort valid candidates by episode number (descending) to get the latest episode first
+        const sortedCandidates = validCandidates.sort((a, b) => {
+          const episodeA = parseInt(a.episodeNumber) || 0;
+          const episodeB = parseInt(b.episodeNumber) || 0;
+          return episodeB - episodeA;
+        });
+
+        // Select the latest episode (first after sorting)
+        const selected = sortedCandidates[0];
+        selectedCandidates.push(selected);
+
+        console.log(`🎯 RSS: Selected Episode ${selected.episodeNumber} [${selected.releaseGroup}] for "${animeTitle}"`);
+
+        // Log skipped candidates
+        if (sortedCandidates.length > 1) {
+          const skipped = sortedCandidates.slice(1);
+          for (const skippedCandidate of skipped) {
+            console.log(`⏭️  RSS: Skipped Episode ${skippedCandidate.episodeNumber} [${skippedCandidate.releaseGroup}] (older than selected episode)`);
+          }
+        }
+      }
+
+      return selectedCandidates;
+    },
+
     async processFeed(rssUrl) {
       try {
-        console.log('🔄 RSS: Fetching RSS feed from:', rssUrl);
-
         // Fetch RSS feed
         const response = await axios.get(rssUrl, {
           timeout: 30000,
@@ -64,8 +353,6 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
             'User-Agent': 'MoeDownloader/1.0'
           }
         });
-
-        console.log('📡 RSS: Response received, size:', response.data.length, 'bytes');
 
         // Parse XML
         const parser = new xml2js.Parser();
@@ -76,14 +363,29 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
         }
 
         const items = parsedResult.rss.channel[0].item;
-        console.log(`📋 RSS: Found ${items.length} RSS items to process`);
+        console.log(`📡 RSS: Found ${items.length} items in feed`);
 
         let processedCount = 0;
         let downloadedCount = 0;
 
         // Get whitelist entries
         const whitelistEntries = whitelistOperations.getAll().filter(entry => entry.enabled);
-        console.log(`📝 RSS: Found ${whitelistEntries.length} enabled whitelist entries`);
+        if (whitelistEntries.length === 0) {
+          console.log('⚠️  RSS: No whitelist entries found, skipping processing');
+          return {
+            success: true,
+            processed: 0,
+            downloaded: 0,
+            message: 'No whitelist entries configured'
+          };
+        }
+
+        // Phase 1: Collect all download candidates
+        console.log(`\n${'='.repeat(80)}`);
+        console.log(`📋 RSS: Phase 1 - Collecting download candidates...`);
+        console.log(`${'='.repeat(80)}`);
+
+        const downloadCandidates = [];
 
         for (const item of items) {
           try {
@@ -92,113 +394,241 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
             const link = item.link?.[0] || '';
             const pubDate = item.pubDate?.[0] || '';
 
-            console.log(`🔍 RSS: Processing item: "${title}"`);
+
 
             if (!guid || !title || !link) {
-              console.warn('⚠️  RSS: Skipping item with missing required fields:', { guid, title, link });
               continue;
             }
 
-            // Add to RSS entries for tracking (but don't use for duplicate detection)
-            console.log(`📝 RSS: Adding RSS entry to database...`);
+            // Check if this GUID was already processed
+            if (processedGuidsOperations.exists(guid)) {
+              continue;
+            }
+
+            // Mark GUID as processed
+            processedGuidsOperations.add(guid);
+            processedCount++;
+
+            // Add to RSS entries for tracking
             const rssResult = rssOperations.add(null, guid, title, link, pubDate);
             const rssId = rssResult.lastInsertRowid;
-            console.log(`✅ RSS: Added RSS entry with ID: ${rssId}`);
-            processedCount++;
-            console.log(`📥 RSS: Added to RSS entries: "${title}"`);
+
+            // First, parse the filename to get release group info
+            const parsedData = parseFilename(title);
+            const releaseGroup = parsedData?.releaseGroup;
+
+            // Check if the release group is in our allowed list BEFORE checking whitelist
+            if (!this.isGroupAllowed(releaseGroup)) {
+              continue; // Skip silently for disallowed groups
+            }
 
             // Check against whitelist with enhanced matching
-            console.log(`🎯 RSS: Checking whitelist matches for: "${title}"`);
             const matchResult = await this.findMatchingWhitelistEntry(title, whitelistEntries);
             if (matchResult.entry) {
-              console.log(`✅ RSS: Found match for "${title}" with whitelist entry "${matchResult.entry.title}"`);
-              console.log(`📊 RSS: Parsed data:`, matchResult.parsedData);
+              // IMPORTANT: Apply anime relations and episode mapping BEFORE duplicate checks
+              let episodeNumber = matchResult.parsedData?.episodeNumber || '';
+              let animeTitle = matchResult.parsedData?.animeTitle || matchResult.entry.title;
+              let mappedEpisodeNumber = episodeNumber;
+              let mappedAnimeTitle = animeTitle;
 
-              // Check if this episode was already processed
-              const episodeNumber = matchResult.parsedData?.episodeNumber || '';
-              const animeTitle = matchResult.parsedData?.animeTitle || matchResult.entry.title;
+              // Apply anime relations episode mapping if available
+              console.log(`🔍 RSS: Checking anime relations for "${animeTitle}" Episode ${episodeNumber}`);
+              console.log(`🔍 RSS: Whitelist entry AniList ID: ${matchResult.entry.anilist_id}`);
+              console.log(`🔍 RSS: Anime relations manager available: ${!!animeRelationsManager}`);
 
-              console.log(`🔍 RSS: Checking processed files for:`, {
-                whitelistEntryId: matchResult.entry.id,
-                episodeNumber,
-                animeTitle,
-                originalTitle: title
-              });
+              if (animeRelationsManager && episodeNumber && matchResult.entry.anilist_id) {
+                try {
+                  const mapping = animeRelationsManager.getEpisodeMapping(matchResult.entry.anilist_id, parseInt(episodeNumber));
+                  console.log(`🔍 RSS: Episode mapping result:`, mapping);
 
-              const alreadyProcessed = processedFilesOperations.exists(
-                matchResult.entry.id,
-                episodeNumber,
-                animeTitle
-              );
-
-              if (alreadyProcessed) {
-                console.log(`⏭️  RSS: Episode already processed in database, skipping: "${title}"`);
-                continue;
+                  if (mapping) {
+                    mappedEpisodeNumber = mapping.mappedEpisode.toString();
+                    // Try to get the mapped anime title
+                    if (mapping.mappedAnime.title) {
+                      mappedAnimeTitle = mapping.mappedAnime.title;
+                    }
+                    console.log(`🔄 RSS: Applied episode mapping: "${animeTitle}" Episode ${episodeNumber} → "${mappedAnimeTitle}" Episode ${mappedEpisodeNumber}`);
+                    console.log(`🔄 RSS: Mapping details:`, {
+                      originalAnime: mapping.originalAnime,
+                      mappedAnime: mapping.mappedAnime,
+                      originalEpisode: mapping.originalEpisode,
+                      mappedEpisode: mapping.mappedEpisode
+                    });
+                  } else {
+                    console.log(`🔍 RSS: No episode mapping found for AniList ID ${matchResult.entry.anilist_id} Episode ${episodeNumber}`);
+                  }
+                } catch (error) {
+                  console.error('❌ RSS: Error applying anime relations mapping:', error);
+                }
               } else {
-                console.log(`✅ RSS: Episode not yet processed, proceeding with download: "${title}"`);
+                if (!animeRelationsManager) {
+                  console.log(`⚠️  RSS: Anime relations manager not available`);
+                }
+                if (!episodeNumber) {
+                  console.log(`⚠️  RSS: No episode number available for mapping`);
+                }
+                if (!matchResult.entry.anilist_id) {
+                  console.log(`⚠️  RSS: No AniList ID available for "${animeTitle}" - this is likely a manual whitelist entry`);
+                  console.log(`💡 RSS: Consider using AniList auto-sync to get episode mapping support`);
+                }
               }
 
-              // Create download
-              console.log(`🏗️  RSS: Generating final title for download...`);
-              const finalTitle = this.generateFinalTitle(title, matchResult.entry, matchResult.parsedData);
-              console.log(`🏷️  RSS: Generated final title: "${finalTitle}"`);
+              // Apply title overrides and episode mappings
+              if (titleOverridesManager) {
+                try {
+                  // Apply title overrides
+                  const overriddenTitle = titleOverridesManager.applyOverrides(mappedAnimeTitle);
+                  if (overriddenTitle !== mappedAnimeTitle) {
+                    mappedAnimeTitle = overriddenTitle;
+                    console.log(`🔄 RSS: Applied title override: "${animeTitle}" → "${mappedAnimeTitle}"`);
+                  }
 
-              const downloadData = {
-                rssEntryId: rssId,
-                torrentLink: link,
-                torrentTitle: title,
-                finalTitle: finalTitle,
-                status: 'queued'
-              };
+                  // Apply episode mappings
+                  if (mappedEpisodeNumber) {
+                    const episodeMappingResult = titleOverridesManager.applyEpisodeMappings(mappedAnimeTitle, parseInt(mappedEpisodeNumber));
+                    if (episodeMappingResult && (
+                      episodeMappingResult.transformedTitle !== mappedAnimeTitle ||
+                      episodeMappingResult.transformedEpisode !== parseInt(mappedEpisodeNumber)
+                    )) {
+                      mappedAnimeTitle = episodeMappingResult.transformedTitle;
+                      mappedEpisodeNumber = episodeMappingResult.transformedEpisode.toString();
+                      console.log(`🔄 RSS: Applied episode mapping: Episode ${episodeNumber} → Episode ${mappedEpisodeNumber}, Title: "${animeTitle}" → "${mappedAnimeTitle}"`);
+                    }
+                  }
+                } catch (error) {
+                  console.error('❌ RSS: Error applying title overrides:', error);
+                }
+              }
 
-              console.log(`💾 RSS: Adding download to database:`, {
-                finalTitle,
-                torrentLink: link,
-                status: 'queued'
-              });
+              // Get all possible title variations using the MAPPED title (including English title and synonyms)
+              const titleVariations = this.getAnimeTitleVariations(mappedAnimeTitle, matchResult.entry);
+              const primaryNormalizedTitle = titleVariations[0] || this.normalizeAnimeTitle(mappedAnimeTitle);
 
-              try {
-                const downloadResult = downloadOperations.add(downloadData);
-                downloadedCount++;
-                console.log(`🎉 RSS: Successfully added download: "${finalTitle}"`, {
-                  downloadId: downloadResult.lastInsertRowid,
-                  changes: downloadResult.changes
+              // Check if this MAPPED episode was already processed or queued
+              const alreadyProcessed = this.checkEpisodeExistsAnyVariation(mappedEpisodeNumber, titleVariations);
+              const existingQueuedDownload = this.checkEpisodeQueuedAnyVariation(mappedEpisodeNumber, titleVariations);
+
+              if (!alreadyProcessed && !existingQueuedDownload) {
+                // Add to candidates for later processing (using MAPPED information)
+                downloadCandidates.push({
+                  rssId,
+                  guid,
+                  title,
+                  link,
+                  pubDate,
+                  matchResult,
+                  // Store both original and mapped information
+                  originalEpisodeNumber: episodeNumber,
+                  originalAnimeTitle: animeTitle,
+                  episodeNumber: mappedEpisodeNumber,  // Use mapped episode number
+                  animeTitle: mappedAnimeTitle,        // Use mapped anime title
+                  primaryNormalizedTitle,
+                  titleVariations,
+                  releaseGroup,
+                  parsedData,
+                  // Flag to indicate if mapping was applied
+                  episodeMappingApplied: mappedEpisodeNumber !== episodeNumber || mappedAnimeTitle !== animeTitle
                 });
-              } catch (downloadError) {
-                console.error(`💥 RSS: Failed to add download to database:`, downloadError);
-                console.error(`💥 RSS: Download data that failed:`, downloadData);
-                throw downloadError;
+
+                if (mappedEpisodeNumber !== episodeNumber || mappedAnimeTitle !== animeTitle) {
+                  console.log(`📋 RSS: Added candidate (MAPPED): "${mappedAnimeTitle}" Episode ${mappedEpisodeNumber} [${releaseGroup}] (was "${animeTitle}" Episode ${episodeNumber})`);
+                } else {
+                  console.log(`📋 RSS: Added candidate: "${mappedAnimeTitle}" Episode ${mappedEpisodeNumber} [${releaseGroup}]`);
+                }
+              } else if (alreadyProcessed) {
+                console.log(`⏭️  RSS: Episode already processed: "${mappedAnimeTitle}" Episode ${mappedEpisodeNumber}`);
+              } else if (existingQueuedDownload) {
+                console.log(`⏭️  RSS: Episode already queued: "${mappedAnimeTitle}" Episode ${mappedEpisodeNumber}`);
               }
 
-              // Track this file as processed
-              const processedFileData = {
-                whitelist_entry_id: matchResult.entry.id,
-                original_filename: title,
-                final_title: finalTitle,
-                episode_number: episodeNumber,
-                anime_title: animeTitle,
-                release_group: matchResult.parsedData?.releaseGroup || '',
-                video_resolution: matchResult.parsedData?.videoResolution || '',
-                file_checksum: matchResult.parsedData?.fileChecksum || '',
-                torrent_link: link,
-                download_status: 'queued'
-              };
-
-              try {
-                const result = processedFilesOperations.add(processedFileData);
-                console.log(`📝 RSS: Tracked processed file: "${finalTitle}"`, {
-                  insertId: result.lastInsertRowid,
-                  changes: result.changes
-                });
-              } catch (error) {
-                console.error(`❌ RSS: Failed to track processed file:`, error);
-                console.error(`❌ RSS: Processed file data:`, processedFileData);
+              // Check if the release group is globally blacklisted
+              const preferredGroup = matchResult.entry.preferred_group || matchResult.entry.group;
+              if (this.isGroupBlacklisted(releaseGroup, preferredGroup)) {
+                console.log(`🚫 RSS: Skipping blacklisted group "${releaseGroup}" for: "${title}"`);
+                if (activityLogger) {
+                  activityLogger.episodeSkipped(title, `Blacklisted group: ${releaseGroup}`);
+                }
+                continue;
               }
-            } else {
-              console.log(`❌ RSS: No whitelist match found for: "${title}"`);
+
             }
           } catch (itemError) {
             console.error('💥 RSS: Error processing RSS item:', itemError);
+          }
+        }
+
+        console.log(`📋 RSS: Collected ${downloadCandidates.length} download candidates`);
+
+        // Phase 2: Select latest episode for each anime
+        console.log(`\n${'='.repeat(80)}`);
+        console.log(`🎯 RSS: Phase 2 - Selecting latest episodes...`);
+        console.log(`${'='.repeat(80)}`);
+
+        const selectedDownloads = this.selectLatestEpisodes(downloadCandidates);
+        console.log(`🎯 RSS: Selected ${selectedDownloads.length} episodes for download`);
+
+        // Phase 3: Process selected downloads
+        console.log(`\n${'='.repeat(80)}`);
+        console.log(`⬇️  RSS: Phase 3 - Processing selected downloads...`);
+        console.log(`${'='.repeat(80)}`);
+
+        for (const candidate of selectedDownloads) {
+          try {
+            console.log(`\n🎬 RSS: Processing episode: "${candidate.title}"`);
+            console.log(`✅ RSS: Found whitelist match: "${candidate.matchResult.entry.title}"`);
+            console.log(`📊 RSS: Episode ${candidate.episodeNumber} [${candidate.releaseGroup}]`);
+
+            // Log whitelist match
+            if (activityLogger) {
+              activityLogger.whitelistMatch(candidate.title, candidate.matchResult.entry.title, candidate.matchResult.parsedData);
+            }
+
+            // Create download using mapped episode information
+            const finalTitle = this.generateFinalTitle(candidate.title, candidate.matchResult.entry, {
+              ...candidate.matchResult.parsedData,
+              episodeNumber: candidate.episodeNumber,  // Use mapped episode number
+              animeTitle: candidate.animeTitle         // Use mapped anime title
+            });
+
+            const downloadData = {
+              rssEntryId: candidate.rssId,
+              torrentLink: candidate.link,
+              torrentTitle: candidate.title,
+              finalTitle: finalTitle,
+              status: 'queued'
+            };
+
+            try {
+              downloadOperations.add(downloadData);
+              downloadedCount++;
+              console.log(`🎉 RSS: Successfully queued download: "${finalTitle}"`);
+            } catch (downloadError) {
+              console.error(`Failed to add download to database:`, downloadError);
+              throw downloadError;
+            }
+
+            // Track this file as processed (using MAPPED information for consistent duplicate detection)
+            const processedFileData = {
+              whitelist_entry_id: candidate.matchResult.entry.id,
+              original_filename: candidate.title,
+              final_title: finalTitle,
+              episode_number: candidate.episodeNumber,        // Use mapped episode number
+              anime_title: candidate.primaryNormalizedTitle,  // Use normalized mapped title
+              release_group: candidate.releaseGroup,
+              video_resolution: candidate.parsedData?.videoResolution || '',
+              file_checksum: candidate.parsedData?.fileChecksum || '',
+              torrent_link: candidate.link,
+              download_status: 'queued'
+            };
+
+            try {
+              processedFilesOperations.add(processedFileData);
+              console.log(`✅ RSS: Episode processing completed successfully`);
+            } catch (error) {
+              console.error(`Failed to track processed file:`, error);
+            }
+          } catch (candidateError) {
+            console.error('💥 RSS: Error processing selected candidate:', candidateError);
           }
         }
 
@@ -206,71 +636,176 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
           processedCount,
           downloadedCount,
           newEntries: processedCount,
-          totalItems: items.length
+          totalItems: items.length,
+          candidatesFound: downloadCandidates.length,
+          episodesSelected: selectedDownloads.length
         };
 
-        console.log('RSS processing completed:', processingResult);
+        // Log RSS processing result
+        if (activityLogger) {
+          activityLogger.rssProcessed(processingResult);
+        }
 
         // Notify frontend about RSS processing result
-        if (notificationService && processedCount > 0) {
+        if (notificationService && downloadedCount > 0) {
           notificationService.rssProcessed(processingResult);
         }
 
         return processingResult;
       } catch (error) {
         console.error('Error processing RSS feed:', error);
-        throw error;
+
+        // Create a more user-friendly error message
+        let userFriendlyMessage = 'Unknown error occurred';
+
+        if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+          userFriendlyMessage = 'RSS server is taking too long to respond. This usually happens when the server is overloaded or your internet connection is slow.';
+        } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+          userFriendlyMessage = 'No internet connection or RSS server not found';
+        } else if (error.code === 'ECONNREFUSED') {
+          userFriendlyMessage = 'Connection refused - the RSS server may be down';
+        } else if (error.code === 'ECONNRESET') {
+          userFriendlyMessage = 'Connection was reset by the RSS server';
+        } else if (error.code === 'EHOSTUNREACH') {
+          userFriendlyMessage = 'RSS server is unreachable';
+        } else if (error.code === 'EPROTO') {
+          userFriendlyMessage = 'Protocol error - invalid SSL/TLS connection';
+        } else if (error.response?.status === 404) {
+          userFriendlyMessage = 'RSS feed not found (404) - check the URL';
+        } else if (error.response?.status === 403) {
+          userFriendlyMessage = 'Access forbidden (403) - you may be blocked';
+        } else if (error.response?.status === 500) {
+          userFriendlyMessage = 'RSS server error (500) - try again later';
+        } else if (error.response?.status === 503) {
+          userFriendlyMessage = 'RSS server temporarily unavailable (503)';
+        } else if (error.message?.includes('Invalid RSS')) {
+          userFriendlyMessage = 'Invalid RSS feed format';
+        } else if (error.message) {
+          userFriendlyMessage = error.message;
+        }
+
+        // Create enhanced error object
+        const enhancedError = new Error(userFriendlyMessage);
+        enhancedError.originalError = error;
+        enhancedError.code = error.code;
+
+        throw enhancedError;
+      }
+    },
+
+    async searchFeed(query) {
+      try {
+        // Construct the search URL
+        const baseUrl = 'https://nyaa.si/?page=rss&c=1_2&f=0';
+        // Replace spaces with + and encode special characters properly for nyaa.si
+        const encodedQuery = query.replace(/\s+/g, '+').replace(/[[\]]/g, (match) => {
+          return match === '[' ? '%5B' : '%5D';
+        });
+        const searchUrl = `${baseUrl}&q=${encodedQuery}`;
+
+        // Fetch the RSS feed
+        const response = await axios.get(searchUrl, {
+          timeout: 30000,
+          headers: {
+            'User-Agent': 'MoeDownloader/1.0.0 (RSS Search)'
+          }
+        });
+
+        if (response.status !== 200) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        // Parse XML
+        const parser = new xml2js.Parser({
+          explicitArray: false,
+          ignoreAttrs: false,
+          mergeAttrs: true
+        });
+
+        const result = await parser.parseStringPromise(response.data);
+
+        if (!result.rss || !result.rss.channel || !result.rss.channel.item) {
+          return {
+            success: true,
+            query: query,
+            items: [],
+            total: 0
+          };
+        }
+
+        // Ensure items is always an array
+        const items = Array.isArray(result.rss.channel.item)
+          ? result.rss.channel.item
+          : [result.rss.channel.item];
+
+        // Process each item and parse with anitomy
+        const processedItems = items.map(item => {
+          const title = item.title || '';
+          const parsedData = parseFilename(title);
+
+          // Handle GUID which might be an object with attributes due to XML parsing
+          let guid = item.guid || '';
+          if (typeof guid === 'object' && guid._) {
+            guid = guid._;
+          }
+
+          return {
+            title: title,
+            link: item.link || '',
+            guid: guid,
+            pubDate: item.pubDate || '',
+            seeders: parseInt(item['nyaa:seeders'] || '0'),
+            leechers: parseInt(item['nyaa:leechers'] || '0'),
+            downloads: parseInt(item['nyaa:downloads'] || '0'),
+            size: item['nyaa:size'] || '',
+            category: item['nyaa:category'] || '',
+            trusted: item['nyaa:trusted'] === 'Yes',
+            remake: item['nyaa:remake'] === 'Yes',
+            infoHash: item['nyaa:infoHash'] || '',
+            parsedData: parsedData
+          };
+        });
+
+        return {
+          success: true,
+          query: query,
+          items: processedItems,
+          total: processedItems.length
+        };
+
+      } catch (error) {
+
+        // Create user-friendly error message
+        let userFriendlyMessage = 'Failed to search RSS feed';
+        if (error.code === 'ENOTFOUND') {
+          userFriendlyMessage = 'Unable to connect to nyaa.si. Please check your internet connection.';
+        } else if (error.code === 'ETIMEDOUT') {
+          userFriendlyMessage = 'Search request timed out. Please try again.';
+        } else if (error.response) {
+          userFriendlyMessage = `Server responded with error: ${error.response.status}`;
+        }
+
+        // Create enhanced error object
+        const enhancedError = new Error(userFriendlyMessage);
+        enhancedError.originalError = error;
+        enhancedError.code = error.code;
+
+        throw enhancedError;
       }
     },
 
     async findMatchingWhitelistEntry(title, whitelistEntries) {
-      console.log(`🔍 MATCH: Starting match process for: "${title}"`);
-
       // Parse the filename to extract metadata
       const parsedData = parseFilename(title);
       if (!parsedData) {
-        console.log(`❌ MATCH: Failed to parse filename: "${title}"`);
         return { entry: null, parsedData: null };
       }
-
-      console.log(`📊 MATCH: Parsed filename data:`, {
-        animeTitle: parsedData.animeTitle,
-        episodeNumber: parsedData.episodeNumber,
-        releaseGroup: parsedData.releaseGroup,
-        videoResolution: parsedData.videoResolution,
-        fileExtension: parsedData.fileExtension
-      });
 
       // Apply title overrides to the parsed anime title before matching
       let transformedAnimeTitle = parsedData.animeTitle;
       let transformedEpisodeNumber = parsedData.episodeNumber ? parseInt(parsedData.episodeNumber) : null;
 
-      console.log(`🔄 MATCH: Title overrides manager available: ${!!titleOverridesManager}`);
-
       if (titleOverridesManager && parsedData.animeTitle) {
-        console.log(`🔄 MATCH: Applying title overrides to: "${parsedData.animeTitle}"`);
-
-        // Debug: Show what user overrides are loaded
-        const userOverridesData = titleOverridesManager.getUserOverridesData();
-        if (userOverridesData && userOverridesData.overrides) {
-          if (userOverridesData.overrides.exact_match) {
-            const exactMatches = Object.keys(userOverridesData.overrides.exact_match);
-            console.log(`🔍 MATCH: User exact matches available: [${exactMatches.join(', ')}]`);
-          } else {
-            console.log(`⚠️  MATCH: No user exact matches loaded`);
-          }
-
-          if (userOverridesData.overrides.episode_mappings) {
-            console.log(`🔍 MATCH: User episode mappings available: ${userOverridesData.overrides.episode_mappings.length}`);
-            userOverridesData.overrides.episode_mappings.forEach((mapping, index) => {
-              console.log(`  ${index + 1}. "${mapping.source_title}" ep${mapping.source_episode_start}-${mapping.source_episode_end} -> "${mapping.dest_title}" ep${mapping.dest_episode_start}-${mapping.dest_episode_end}`);
-            });
-          } else {
-            console.log(`⚠️  MATCH: No user episode mappings loaded`);
-          }
-        } else {
-          console.log(`⚠️  MATCH: No user overrides data loaded`);
-        }
 
         try {
           // Apply title overrides
@@ -278,63 +813,29 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
             releaseGroup: parsedData.releaseGroup
           });
 
-          console.log(`🔄 MATCH: Title override result: "${parsedData.animeTitle}" -> "${overriddenTitle}"`);
-
           if (overriddenTitle !== parsedData.animeTitle) {
-            console.log(`✅ MATCH: Title override applied: "${parsedData.animeTitle}" -> "${overriddenTitle}"`);
             transformedAnimeTitle = overriddenTitle;
-          } else {
-            console.log(`ℹ️  MATCH: No title override needed for: "${parsedData.animeTitle}"`);
           }
 
           // Apply episode mappings if we have an episode number
           if (transformedEpisodeNumber) {
-            console.log(`🔄 MATCH: Applying episode mappings to: "${transformedAnimeTitle}" ep${transformedEpisodeNumber}`);
-
-            // Debug: Show what episode mappings are being checked
-            if (userOverridesData && userOverridesData.overrides && userOverridesData.overrides.episode_mappings) {
-              console.log(`🔍 MATCH: Checking ${userOverridesData.overrides.episode_mappings.length} user episode mappings:`);
-              userOverridesData.overrides.episode_mappings.forEach((mapping, index) => {
-                const matches = mapping.source_title === transformedAnimeTitle &&
-                               transformedEpisodeNumber >= mapping.source_episode_start &&
-                               transformedEpisodeNumber <= mapping.source_episode_end;
-                console.log(`  ${index + 1}. "${mapping.source_title}" ep${mapping.source_episode_start}-${mapping.source_episode_end} -> "${mapping.dest_title}" ep${mapping.dest_episode_start}-${mapping.dest_episode_end} ${matches ? '✅ MATCH' : '❌'}`);
-                if (!matches) {
-                  if (mapping.source_title !== transformedAnimeTitle) {
-                    console.log(`    ❌ Title mismatch: "${mapping.source_title}" !== "${transformedAnimeTitle}"`);
-                  }
-                  if (!(transformedEpisodeNumber >= mapping.source_episode_start && transformedEpisodeNumber <= mapping.source_episode_end)) {
-                    console.log(`    ❌ Episode range mismatch: ${transformedEpisodeNumber} not in range ${mapping.source_episode_start}-${mapping.source_episode_end}`);
-                  }
-                }
-              });
-            }
-
             const episodeMappingResult = titleOverridesManager.applyEpisodeMappings(transformedAnimeTitle, transformedEpisodeNumber);
-            console.log(`🔄 MATCH: Episode mapping result:`, episodeMappingResult);
 
             if (episodeMappingResult && (
               episodeMappingResult.transformedTitle !== transformedAnimeTitle ||
               episodeMappingResult.transformedEpisode !== transformedEpisodeNumber
             )) {
-              console.log(`✅ MATCH: Episode mapping applied: "${transformedAnimeTitle}" ep${transformedEpisodeNumber} -> "${episodeMappingResult.transformedTitle}" ep${episodeMappingResult.transformedEpisode}`);
               transformedAnimeTitle = episodeMappingResult.transformedTitle;
               transformedEpisodeNumber = episodeMappingResult.transformedEpisode;
-            } else {
-              console.log(`ℹ️  MATCH: No episode mapping needed for: "${transformedAnimeTitle}" ep${transformedEpisodeNumber}`);
             }
           }
         } catch (error) {
-          console.error(`❌ MATCH: Error applying title overrides:`, error);
+          console.error(`Error applying title overrides:`, error);
         }
-      } else {
-        console.log(`⚠️  MATCH: Title overrides manager not available or no anime title to process`);
       }
 
       // Apply anime relations episode mapping if available
       if (animeRelationsManager && transformedEpisodeNumber) {
-        console.log(`🔄 MATCH: Checking anime relations for: "${transformedAnimeTitle}" ep${transformedEpisodeNumber}`);
-
         try {
           // Try to find episode mapping in anime relations database
           const relationsData = animeRelationsManager.getRelationsData();
@@ -376,15 +877,12 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
                       mappedTitle = titles?.english || titles?.romaji || titles?.native;
                     }
                   } catch (error) {
-                    console.log(`🔍 MATCH: Could not fetch anime titles from AniList:`, error.message);
+                    // Silently continue if AniList fetch fails
                   }
                 }
 
                 // Check if the original anime title matches our current title (case-insensitive)
                 if (originalTitle && originalTitle.toLowerCase() === transformedAnimeTitle.toLowerCase()) {
-                  console.log(`✅ MATCH: Found matching anime relations mapping!`);
-                  console.log(`🔄 MATCH: "${originalTitle}" ep${mapping.originalEpisode} -> "${mappedTitle}" ep${mapping.mappedEpisode}`);
-
                   foundMapping = {
                     originalTitle: transformedAnimeTitle,
                     originalEpisode: transformedEpisodeNumber,
@@ -397,44 +895,24 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
             }
 
             if (foundMapping) {
-              console.log(`✅ MATCH: Applying anime relations mapping: "${foundMapping.originalTitle}" ep${foundMapping.originalEpisode} -> "${foundMapping.mappedTitle}" ep${foundMapping.mappedEpisode}`);
               transformedAnimeTitle = foundMapping.mappedTitle;
               transformedEpisodeNumber = foundMapping.mappedEpisode;
-            } else {
-              console.log(`ℹ️  MATCH: No anime relations mapping found for: "${transformedAnimeTitle}" ep${transformedEpisodeNumber}`);
             }
           } else {
-            console.log(`⚠️  MATCH: No anime relations data available`);
           }
         } catch (error) {
-          console.error(`❌ MATCH: Error applying anime relations mapping:`, error);
+          console.error(`Error applying anime relations mapping:`, error);
         }
-      } else {
-        console.log(`⏭️  MATCH: No anime relations manager or episode number for relations mapping`);
       }
-
-      console.log(`🎯 MATCH: Final transformed title: "${transformedAnimeTitle}" (original: "${parsedData.animeTitle}")`);
-      console.log(`🎯 MATCH: Final transformed episode: ${transformedEpisodeNumber} (original: ${parsedData.episodeNumber})`);
-
 
       const titleLower = title.toLowerCase();
       const animeTitle = transformedAnimeTitle.toLowerCase();
       const episodeNumber = transformedEpisodeNumber;
 
-      console.log(`📋 MATCH: Checking against ${whitelistEntries.length} whitelist entries:`);
-      whitelistEntries.forEach((entry, index) => {
-        console.log(`  ${index + 1}. "${entry.title}" (ID: ${entry.id})`);
-      });
-
       for (const entry of whitelistEntries) {
-        console.log(`🎯 MATCH: Trying whitelist entry: "${entry.title}" (ID: ${entry.id})`);
-        console.log(`🎯 MATCH: Comparing transformed title "${animeTitle}" against whitelist entry "${entry.title.toLowerCase()}"`);
-
         // Try different matching strategies
         const matchResult = await this.tryMatchEntry(entry, title, titleLower, animeTitle, episodeNumber, parsedData);
         if (matchResult) {
-          console.log(`✅ MATCH: Found match with entry: "${entry.title}"`);
-
           // Update parsedData with transformed values for final title generation
           const updatedParsedData = {
             ...parsedData,
@@ -453,12 +931,8 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
           }
 
           return { entry, parsedData: updatedParsedData };
-        } else {
-          console.log(`❌ MATCH: No match with entry: "${entry.title}"`);
         }
       }
-
-      console.log(`🚫 MATCH: No whitelist matches found for: "${title}"`);
 
       // Even if no match found, return the transformed parsedData so UI can show the transformations
       const updatedParsedData = {
@@ -481,53 +955,112 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
     },
 
     async tryMatchEntry(entry, originalTitle, titleLower, animeTitle, episodeNumber, parsedData) {
-      console.log(`🔍 MATCH: Trying entry "${entry.title}" against "${originalTitle}"`);
-
       // Strategy 1: Direct title matching (existing logic)
-      console.log(`📝 MATCH: Strategy 1 - Direct title matching`);
       if (titleLower.includes(entry.title.toLowerCase())) {
-        console.log(`✅ MATCH: Title contains whitelist entry title`);
         if (this.checkKeywordsAndQuality(entry, titleLower, parsedData)) {
-          console.log(`✅ MATCH: Keywords and quality check passed`);
           return true;
-        } else {
-          console.log(`❌ MATCH: Keywords or quality check failed`);
         }
-      } else {
-        console.log(`❌ MATCH: Title does not contain whitelist entry title`);
       }
 
       // Strategy 2: Anime title matching (from parsed data)
-      console.log(`📝 MATCH: Strategy 2 - Anime title matching (parsed: "${animeTitle}")`);
       if (animeTitle && animeTitle.includes(entry.title.toLowerCase())) {
-        console.log(`✅ MATCH: Parsed anime title contains whitelist entry title`);
         if (this.checkKeywordsAndQuality(entry, titleLower, parsedData)) {
-          console.log(`✅ MATCH: Keywords and quality check passed`);
           return true;
-        } else {
-          console.log(`❌ MATCH: Keywords or quality check failed`);
         }
-      } else {
-        console.log(`❌ MATCH: Parsed anime title does not contain whitelist entry title`);
       }
+
+    // Strategy 3: Enhanced AniList title matching for auto-synced entries
+    if (entry.source_type === 'anilist' && entry.auto_sync) {
+      if (await this.tryAniListTitleVariants(entry, animeTitle, titleLower, parsedData)) {
+        return true;
+      }
+    }
 
       // Strategy 3: AniList-based matching with relations
       if (entry.anilist_id && animeRelationsManager) {
-        console.log(`📝 MATCH: Strategy 3 - AniList-based matching (AniList ID: ${entry.anilist_id})`);
         const matchResult = await this.tryAniListMatching(entry, animeTitle, episodeNumber, parsedData);
         if (matchResult && this.checkKeywordsAndQuality(entry, titleLower, parsedData)) {
-          console.log(`✅ MATCH: AniList matching and quality check passed`);
           return true;
-        } else {
-          console.log(`❌ MATCH: AniList matching or quality check failed`);
         }
-      } else {
-        console.log(`⏭️  MATCH: No AniList ID or relations manager, skipping AniList matching`);
       }
 
-      console.log(`❌ MATCH: All strategies failed for entry "${entry.title}"`);
       return false;
     },
+
+    /**
+     * Try matching against AniList title variants stored in whitelist entry
+     * @param {Object} entry - Whitelist entry with AniList title variants
+     * @param {string} animeTitle - Parsed anime title from RSS
+     * @param {string} titleLower - Full RSS title in lowercase
+     * @param {Object} parsedData - Parsed RSS data
+     * @returns {boolean} - True if match found
+     */
+    async tryAniListTitleVariants(entry, animeTitle, titleLower, parsedData) {
+      if (!animeTitle) {
+        return false;
+      }
+
+      const animeTitleLower = animeTitle.toLowerCase();
+
+      // Collect all title variants to try
+      const titleVariants = [];
+
+      // Add stored title variants from whitelist entry in priority order
+      // 1. Exact romaji title
+      if (entry.title_romaji) titleVariants.push(entry.title_romaji.toLowerCase());
+
+      // 2. Cleaned romaji title (without special characters)
+      if (entry.title_romaji) {
+        const cleanedRomaji = entry.title_romaji
+          .replace(/[^\w\s]/g, ' ')  // Replace non-alphanumeric (except spaces) with spaces
+          .replace(/\s+/g, ' ')      // Replace multiple spaces with single space
+          .trim()
+          .toLowerCase();
+        if (cleanedRomaji !== entry.title_romaji.toLowerCase()) {
+          titleVariants.push(cleanedRomaji);
+        }
+      }
+
+      // 3. English title
+      if (entry.title_english) titleVariants.push(entry.title_english.toLowerCase());
+
+      // Add synonyms if available
+      if (entry.title_synonyms) {
+        try {
+          const synonyms = typeof entry.title_synonyms === 'string'
+            ? JSON.parse(entry.title_synonyms)
+            : entry.title_synonyms;
+          if (Array.isArray(synonyms)) {
+            synonyms.forEach(synonym => {
+              if (synonym && typeof synonym === 'string' && /^[a-zA-Z0-9\s\-:!?.,'"()&]+$/.test(synonym)) {
+                titleVariants.push(synonym.toLowerCase());
+              }
+            });
+          }
+        } catch (error) {
+          console.warn('Failed to parse synonyms for entry:', entry.title);
+        }
+      }
+
+      // Try matching against each title variant (exact match only)
+      for (const variant of titleVariants) {
+        if (!variant) continue;
+
+        // Only use exact matching to avoid mismatches
+        if (animeTitleLower === variant) {
+          console.log(`🎯 RSS: AniList exact title match found: "${animeTitle}" matches "${variant}" for entry "${entry.title}"`);
+
+          // Check keywords and quality constraints
+          if (this.checkKeywordsAndQuality(entry, titleLower, parsedData)) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    },
+
+
 
     async tryAniListMatching(entry, animeTitle, episodeNumber, parsedData) {
       try {
@@ -570,108 +1103,71 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
     },
 
     checkKeywordsAndQuality(entry, titleLower, parsedData = null) {
-      console.log(`🔍 FILTER: Checking keywords and quality for entry "${entry.title}"`);
-
       // Check keywords if specified
       if (entry.keywords) {
         const keywords = entry.keywords.split(',').map(k => k.trim().toLowerCase());
-        console.log(`📝 FILTER: Required keywords: [${keywords.join(', ')}]`);
         const hasAllKeywords = keywords.every(keyword =>
           keyword === '' || titleLower.includes(keyword)
         );
         if (!hasAllKeywords) {
-          console.log(`❌ FILTER: Missing required keywords`);
           return false;
-        } else {
-          console.log(`✅ FILTER: All required keywords found`);
         }
-      } else {
-        console.log(`⏭️  FILTER: No required keywords specified`);
       }
 
       // Check exclude keywords if specified
       if (entry.exclude_keywords) {
         const excludeKeywords = entry.exclude_keywords.split(',').map(k => k.trim().toLowerCase());
-        console.log(`📝 FILTER: Exclude keywords: [${excludeKeywords.join(', ')}]`);
         const hasExcludeKeyword = excludeKeywords.some(keyword =>
           keyword !== '' && titleLower.includes(keyword)
         );
         if (hasExcludeKeyword) {
-          console.log(`❌ FILTER: Found exclude keyword`);
           return false;
-        } else {
-          console.log(`✅ FILTER: No exclude keywords found`);
         }
-      } else {
-        console.log(`⏭️  FILTER: No exclude keywords specified`);
       }
 
       // Check quality preference if specified
       if (entry.quality && entry.quality !== 'any') {
-        console.log(`📝 FILTER: Required quality: ${entry.quality}`);
         if (!titleLower.includes(entry.quality.toLowerCase())) {
-          console.log(`❌ FILTER: Quality requirement not met`);
           return false;
-        } else {
-          console.log(`✅ FILTER: Quality requirement met`);
         }
-      } else {
-        console.log(`⏭️  FILTER: No quality requirement specified`);
       }
 
       // Check release group preference if specified
       const preferredGroup = entry.preferred_group || entry.group; // Support both field names
       if (preferredGroup && preferredGroup !== 'any' && parsedData && parsedData.releaseGroup) {
-        console.log(`📝 FILTER: Required release group: ${preferredGroup}`);
-        console.log(`📝 FILTER: Detected release group: ${parsedData.releaseGroup}`);
-
+        // If a specific group is preferred, check if it matches
         if (parsedData.releaseGroup !== preferredGroup) {
-          console.log(`❌ FILTER: Release group mismatch - wanted "${preferredGroup}", got "${parsedData.releaseGroup}"`);
           return false;
-        } else {
-          console.log(`✅ FILTER: Release group requirement met`);
         }
-      } else if (preferredGroup && preferredGroup !== 'any') {
-        console.log(`⚠️  FILTER: Release group preference "${preferredGroup}" specified but no parsed data available`);
-      } else {
-        console.log(`⏭️  FILTER: No release group preference specified or set to "any"`);
+      } else if (parsedData && parsedData.releaseGroup) {
+        // If preference is "any" or not specified, still check if the group is in our allowed list
+        if (!this.isGroupAllowed(parsedData.releaseGroup)) {
+          return false;
+        }
       }
 
-      console.log(`✅ FILTER: All filters passed for entry "${entry.title}"`);
       return true;
     },
 
     generateFinalTitle(originalTitle, whitelistEntry, parsedData = null) {
-      console.log(`🏷️  TITLE: Generating final title for "${originalTitle}" with entry "${whitelistEntry.title}"`);
-
       let episodeNumber = null;
       let episodeTitle = '';
 
       if (parsedData) {
         episodeNumber = parsedData.episodeNumber;
         episodeTitle = parsedData.episodeTitle;
-        console.log(`📊 TITLE: Using parsed data - Episode: ${episodeNumber}, Title: ${episodeTitle}`);
 
         // Check for episode mapping if we have AniList ID and relations
         if (whitelistEntry.anilist_id && episodeNumber && animeRelationsManager) {
-          console.log(`🔄 TITLE: Checking episode mapping for AniList ID ${whitelistEntry.anilist_id}, episode ${episodeNumber}`);
           const mapping = animeRelationsManager.getEpisodeMapping(whitelistEntry.anilist_id, parseInt(episodeNumber));
           if (mapping) {
-            const originalEp = episodeNumber;
             episodeNumber = mapping.mappedEpisode.toString();
-            console.log(`✅ TITLE: Applied episode mapping: ${originalEp} -> ${episodeNumber}`);
-          } else {
-            console.log(`⏭️  TITLE: No episode mapping found`);
           }
-        } else {
-          console.log(`⏭️  TITLE: No AniList ID or relations manager for episode mapping`);
         }
       } else {
         // Fallback to regex extraction
-        console.log(`📝 TITLE: No parsed data, using regex fallback`);
         const episodeMatch = originalTitle.match(/(?:episode?\s*|ep\.?\s*|e)(\d+)/i);
         episodeNumber = episodeMatch ? episodeMatch[1] : null;
-        console.log(`📊 TITLE: Regex extracted episode: ${episodeNumber}`);
       }
 
       // Apply title overrides and episode mappings
@@ -679,12 +1175,9 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
       let finalEpisodeNumber = episodeNumber;
 
       if (titleOverridesManager) {
-        console.log(`🔄 TITLE: Applying title overrides to "${finalTitle}"`);
-
         // First apply title overrides
         const overriddenTitle = titleOverridesManager.applyOverrides(finalTitle);
         if (overriddenTitle !== finalTitle) {
-          console.log(`✅ TITLE: Applied title override: "${finalTitle}" -> "${overriddenTitle}"`);
           finalTitle = overriddenTitle;
         }
 
@@ -692,29 +1185,21 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
         if (finalEpisodeNumber) {
           const mappingResult = titleOverridesManager.applyEpisodeMappings(finalTitle, parseInt(finalEpisodeNumber));
           if (mappingResult.transformedTitle !== finalTitle || mappingResult.transformedEpisode !== parseInt(finalEpisodeNumber)) {
-            console.log(`✅ TITLE: Applied episode mapping: "${finalTitle}" episode ${finalEpisodeNumber} -> "${mappingResult.transformedTitle}" episode ${mappingResult.transformedEpisode}`);
             finalTitle = mappingResult.transformedTitle;
             finalEpisodeNumber = mappingResult.transformedEpisode.toString();
           }
         }
-      } else {
-        console.log(`⏭️  TITLE: No title overrides manager available`);
       }
-
-      console.log(`🏗️  TITLE: Base title after overrides: "${finalTitle}"`);
 
       if (finalEpisodeNumber) {
         const paddedEpisode = finalEpisodeNumber.padStart(2, '0');
         finalTitle += ` - Episode ${paddedEpisode}`;
-        console.log(`📺 TITLE: Added episode number: "${paddedEpisode}"`);
       }
 
       if (episodeTitle) {
         finalTitle += ` - ${episodeTitle}`;
-        console.log(`📝 TITLE: Added episode title: "${episodeTitle}"`);
       }
 
-      console.log(`🎯 TITLE: Final generated title: "${finalTitle}"`);
       return finalTitle;
     },
 
@@ -745,16 +1230,42 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
           description: testResult.rss.channel[0].description?.[0] || 'No description'
         };
       } catch (error) {
+        // Create user-friendly error message
+        let userFriendlyMessage = 'Unknown error occurred';
+
+        if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+          userFriendlyMessage = 'Request timed out - the RSS server is taking too long to respond';
+        } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+          userFriendlyMessage = 'No internet connection or RSS server not found';
+        } else if (error.code === 'ECONNREFUSED') {
+          userFriendlyMessage = 'Connection refused - the RSS server may be down';
+        } else if (error.code === 'ECONNRESET') {
+          userFriendlyMessage = 'Connection was reset by the RSS server';
+        } else if (error.code === 'EHOSTUNREACH') {
+          userFriendlyMessage = 'RSS server is unreachable';
+        } else if (error.code === 'EPROTO') {
+          userFriendlyMessage = 'Protocol error - invalid SSL/TLS connection';
+        } else if (error.response?.status === 404) {
+          userFriendlyMessage = 'RSS feed not found (404) - check the URL';
+        } else if (error.response?.status === 403) {
+          userFriendlyMessage = 'Access forbidden (403) - you may be blocked';
+        } else if (error.response?.status === 500) {
+          userFriendlyMessage = 'RSS server error (500) - try again later';
+        } else if (error.response?.status === 503) {
+          userFriendlyMessage = 'RSS server temporarily unavailable (503)';
+        } else if (error.message) {
+          userFriendlyMessage = error.message;
+        }
+
         return {
           success: false,
-          error: error.message
+          error: userFriendlyMessage
         };
       }
     },
 
     async testFeed(rssUrl) {
       try {
-        console.log('Testing RSS feed:', rssUrl);
 
         // Fetch RSS feed
         const response = await axios.get(rssUrl, {
@@ -783,15 +1294,42 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
         };
       } catch (error) {
         console.error('Error testing RSS feed:', error);
-        throw new Error(`RSS feed test failed: ${error.message}`);
+
+        // Create user-friendly error message
+        let userFriendlyMessage = 'Unknown error occurred';
+
+        if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+          userFriendlyMessage = 'Request timed out - the RSS server is taking too long to respond';
+        } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+          userFriendlyMessage = 'No internet connection or RSS server not found';
+        } else if (error.code === 'ECONNREFUSED') {
+          userFriendlyMessage = 'Connection refused - the RSS server may be down';
+        } else if (error.code === 'ECONNRESET') {
+          userFriendlyMessage = 'Connection was reset by the RSS server';
+        } else if (error.code === 'EHOSTUNREACH') {
+          userFriendlyMessage = 'RSS server is unreachable';
+        } else if (error.code === 'EPROTO') {
+          userFriendlyMessage = 'Protocol error - invalid SSL/TLS connection';
+        } else if (error.response?.status === 404) {
+          userFriendlyMessage = 'RSS feed not found (404) - check the URL';
+        } else if (error.response?.status === 403) {
+          userFriendlyMessage = 'Access forbidden (403) - you may be blocked';
+        } else if (error.response?.status === 500) {
+          userFriendlyMessage = 'RSS server error (500) - try again later';
+        } else if (error.response?.status === 503) {
+          userFriendlyMessage = 'RSS server temporarily unavailable (503)';
+        } else if (error.message?.includes('Invalid RSS')) {
+          userFriendlyMessage = 'Invalid RSS feed format';
+        } else if (error.message) {
+          userFriendlyMessage = error.message;
+        }
+
+        throw new Error(`RSS feed test failed: ${userFriendlyMessage}`);
       }
     },
 
     async testRSSDownload(rssUrl, options = {}) {
       try {
-        console.log('🧪 TEST: Starting RSS download test for:', rssUrl);
-        console.log('🧪 TEST: Options:', options);
-
         // Fetch RSS feed using the same logic as processFeed
         const response = await axios.get(rssUrl, {
           timeout: 30000,
@@ -799,8 +1337,6 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
             'User-Agent': 'MoeDownloader/1.0'
           }
         });
-
-        console.log('📡 RSS: Response received, size:', response.data.length, 'bytes');
 
         // Parse XML
         const parser = new xml2js.Parser();
@@ -811,19 +1347,15 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
         }
 
         const items = parsedResult.rss.channel[0].item;
-        console.log(`🧪 TEST: Found ${items.length} RSS items to process`);
-
         let processedCount = 0;
         let downloadedCount = 0;
         const testResults = [];
 
         // Get whitelist entries (same as real implementation)
         const whitelistEntries = whitelistOperations.getAll().filter(entry => entry.enabled);
-        console.log(`🧪 TEST: Found ${whitelistEntries.length} enabled whitelist entries`);
 
         // Process items (limit to first few for testing if specified)
         const itemsToProcess = options.maxItems ? items.slice(0, options.maxItems) : items;
-        console.log(`🧪 TEST: Processing ${itemsToProcess.length} items (limited by maxItems: ${options.maxItems || 'none'})`);
 
         for (const item of itemsToProcess) {
           try {
@@ -832,10 +1364,7 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
             const link = item.link?.[0] || '';
             const pubDate = item.pubDate?.[0] || '';
 
-            console.log(`🧪 TEST: Processing item: "${title}"`);
-
             if (!guid || !title || !link) {
-              console.warn('⚠️  RSS: Skipping item with missing required fields:', { guid, title, link });
               testResults.push({
                 originalTitle: title,
                 status: 'skipped',
@@ -847,15 +1376,14 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
               continue;
             }
 
+
+
             // Add to RSS entries for tracking (but mark as test)
-            console.log(`🧪 TEST: Adding RSS entry to database (test mode)...`);
             const rssResult = rssOperations.add(null, `TEST_${guid}`, `TEST: ${title}`, link, pubDate);
             const rssId = rssResult.lastInsertRowid;
-            console.log(`✅ RSS: Added test RSS entry with ID: ${rssId}`);
             processedCount++;
 
             // Check against whitelist with enhanced matching (same as real implementation)
-            console.log(`🎯 RSS: Checking whitelist matches for: "${title}"`);
             const matchResult = await this.findMatchingWhitelistEntry(title, whitelistEntries);
 
             const result = {
@@ -876,42 +1404,117 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
               console.log(`✅ RSS: Found match for "${title}" with whitelist entry "${matchResult.entry.title}"`);
               console.log(`📊 RSS: Parsed data:`, matchResult.parsedData);
 
-              // Check if this episode was already processed (same logic as real implementation)
-              const episodeNumber = matchResult.parsedData?.episodeNumber || '';
-              const animeTitle = matchResult.parsedData?.animeTitle || matchResult.entry.title;
+              // Check if the release group is in our allowed list (same as real implementation)
+              const releaseGroup = matchResult.parsedData?.releaseGroup;
+              if (!this.isGroupAllowed(releaseGroup)) {
+                console.log(`🚫 TEST: Skipping torrent from disallowed group "${releaseGroup}"`);
+                result.status = 'skipped';
+                result.reason = `Disallowed group: ${releaseGroup}`;
+                testResults.push(result);
+                continue;
+              }
 
-              console.log(`🔍 RSS: Checking processed files for:`, {
-                whitelistEntryId: matchResult.entry.id,
-                episodeNumber,
-                animeTitle,
-                originalTitle: title
-              });
+              // Check if the release group is globally blacklisted (same as real implementation)
+              const preferredGroup = matchResult.entry.preferred_group || matchResult.entry.group;
+              if (this.isGroupBlacklisted(releaseGroup, preferredGroup)) {
+                console.log(`🚫 TEST: Skipping blacklisted group "${releaseGroup}" for: "${title}"`);
+                result.status = 'skipped';
+                result.reason = `Blacklisted group: ${releaseGroup}`;
+                testResults.push(result);
+                continue;
+              }
 
-              const alreadyProcessed = processedFilesOperations.exists(
-                matchResult.entry.id,
-                episodeNumber,
-                animeTitle
-              );
+              // IMPORTANT: Apply anime relations and episode mapping BEFORE duplicate checks (same as real implementation)
+              let episodeNumber = matchResult.parsedData?.episodeNumber || '';
+              let animeTitle = matchResult.parsedData?.animeTitle || matchResult.entry.title;
+              let mappedEpisodeNumber = episodeNumber;
+              let mappedAnimeTitle = animeTitle;
+
+              // Apply anime relations episode mapping if available
+              if (animeRelationsManager && episodeNumber && matchResult.entry.anilist_id) {
+                try {
+                  const mapping = animeRelationsManager.getEpisodeMapping(matchResult.entry.anilist_id, parseInt(episodeNumber));
+                  if (mapping) {
+                    mappedEpisodeNumber = mapping.mappedEpisode.toString();
+                    // Try to get the mapped anime title
+                    if (mapping.mappedAnime.title) {
+                      mappedAnimeTitle = mapping.mappedAnime.title;
+                    }
+                    console.log(`🔄 TEST: Applied episode mapping: "${animeTitle}" Episode ${episodeNumber} → "${mappedAnimeTitle}" Episode ${mappedEpisodeNumber}`);
+                  }
+                } catch (error) {
+                  console.error('❌ TEST: Error applying anime relations mapping:', error);
+                }
+              }
+
+              // Apply title overrides and episode mappings
+              if (titleOverridesManager) {
+                try {
+                  // Apply title overrides
+                  const overriddenTitle = titleOverridesManager.applyOverrides(mappedAnimeTitle);
+                  if (overriddenTitle !== mappedAnimeTitle) {
+                    mappedAnimeTitle = overriddenTitle;
+                    console.log(`🔄 TEST: Applied title override: "${animeTitle}" → "${mappedAnimeTitle}"`);
+                  }
+
+                  // Apply episode mappings
+                  if (mappedEpisodeNumber) {
+                    const episodeMappingResult = titleOverridesManager.applyEpisodeMappings(mappedAnimeTitle, parseInt(mappedEpisodeNumber));
+                    if (episodeMappingResult && (
+                      episodeMappingResult.transformedTitle !== mappedAnimeTitle ||
+                      episodeMappingResult.transformedEpisode !== parseInt(mappedEpisodeNumber)
+                    )) {
+                      mappedAnimeTitle = episodeMappingResult.transformedTitle;
+                      mappedEpisodeNumber = episodeMappingResult.transformedEpisode.toString();
+                      console.log(`🔄 TEST: Applied episode mapping: Episode ${episodeNumber} → Episode ${mappedEpisodeNumber}, Title: "${animeTitle}" → "${mappedAnimeTitle}"`);
+                    }
+                  }
+                } catch (error) {
+                  console.error('❌ TEST: Error applying title overrides:', error);
+                }
+              }
+
+              // Get all possible title variations using the MAPPED title (same as real implementation)
+              const titleVariations = this.getAnimeTitleVariations(mappedAnimeTitle, matchResult.entry);
+              console.log(`🔍 TEST: Checking processed files for title variations:`, titleVariations);
+
+              const alreadyProcessed = this.checkEpisodeExistsAnyVariation(mappedEpisodeNumber, titleVariations);
 
               if (alreadyProcessed && !options.ignoreProcessedFiles) {
                 console.log(`⏭️  RSS: Episode already processed in database, skipping: "${title}"`);
                 result.status = 'already_processed';
                 result.reason = 'Episode already processed in database';
               } else {
-                console.log(`✅ RSS: Episode not yet processed, proceeding with download: "${title}"`);
+                // Check if this MAPPED episode is already queued for download (same logic as real implementation)
+                const existingQueuedDownload = this.checkEpisodeQueuedAnyVariation(mappedEpisodeNumber, titleVariations);
 
-                // Create download (same logic as real implementation)
-                console.log(`🏗️  RSS: Generating final title for download...`);
-                const finalTitle = this.generateFinalTitle(title, matchResult.entry, matchResult.parsedData);
-                console.log(`🏷️  RSS: Generated final title: "${finalTitle}"`);
+                if (existingQueuedDownload && !options.ignoreProcessedFiles) {
+                  console.log(`⏭️  TEST: Episode already queued for download, skipping: "${title}" (mapped to "${mappedAnimeTitle}" Episode ${mappedEpisodeNumber})`);
+                  result.status = 'already_queued';
+                  result.reason = 'Episode already queued for download';
+                } else {
+                  if (mappedEpisodeNumber !== episodeNumber || mappedAnimeTitle !== animeTitle) {
+                    console.log(`✅ TEST: Episode not yet processed, proceeding with download: "${title}" (mapped to "${mappedAnimeTitle}" Episode ${mappedEpisodeNumber})`);
+                  } else {
+                    console.log(`✅ TEST: Episode not yet processed, proceeding with download: "${title}"`);
+                  }
 
-                const downloadData = {
-                  rssEntryId: rssId,
-                  torrentLink: link,
-                  torrentTitle: title,
-                  finalTitle: finalTitle,
-                  status: 'queued'
-                };
+                  // Create download using mapped episode information (same logic as real implementation)
+                  console.log(`🏗️  TEST: Generating final title for download...`);
+                  const finalTitle = this.generateFinalTitle(title, matchResult.entry, {
+                    ...matchResult.parsedData,
+                    episodeNumber: mappedEpisodeNumber,  // Use mapped episode number
+                    animeTitle: mappedAnimeTitle         // Use mapped anime title
+                  });
+                  console.log(`🏷️  TEST: Generated final title: "${finalTitle}"`);
+
+                  const downloadData = {
+                    rssEntryId: rssId,
+                    torrentLink: link,
+                    torrentTitle: title,
+                    finalTitle: finalTitle,
+                    status: 'queued'
+                  };
 
                 console.log(`💾 RSS: Adding download to database:`, {
                   finalTitle,
@@ -961,6 +1564,7 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
                     console.error(`❌ RSS: Failed to track processed file:`, error);
                     result.error = result.error ? `${result.error}; Failed to track processed file: ${error.message}` : `Failed to track processed file: ${error.message}`;
                   }
+                }
                 }
               }
             } else {
@@ -1016,9 +1620,39 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
         return processingResult;
       } catch (error) {
         console.error('🧪 TEST: RSS download test failed:', error);
+
+        // Create user-friendly error message
+        let userFriendlyMessage = 'Unknown error occurred';
+
+        if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+          userFriendlyMessage = 'Request timed out - the RSS server is taking too long to respond';
+        } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+          userFriendlyMessage = 'No internet connection or RSS server not found';
+        } else if (error.code === 'ECONNREFUSED') {
+          userFriendlyMessage = 'Connection refused - the RSS server may be down';
+        } else if (error.code === 'ECONNRESET') {
+          userFriendlyMessage = 'Connection was reset by the RSS server';
+        } else if (error.code === 'EHOSTUNREACH') {
+          userFriendlyMessage = 'RSS server is unreachable';
+        } else if (error.code === 'EPROTO') {
+          userFriendlyMessage = 'Protocol error - invalid SSL/TLS connection';
+        } else if (error.response?.status === 404) {
+          userFriendlyMessage = 'RSS feed not found (404) - check the URL';
+        } else if (error.response?.status === 403) {
+          userFriendlyMessage = 'Access forbidden (403) - you may be blocked';
+        } else if (error.response?.status === 500) {
+          userFriendlyMessage = 'RSS server error (500) - try again later';
+        } else if (error.response?.status === 503) {
+          userFriendlyMessage = 'RSS server temporarily unavailable (503)';
+        } else if (error.message?.includes('Invalid RSS')) {
+          userFriendlyMessage = 'Invalid RSS feed format';
+        } else if (error.message) {
+          userFriendlyMessage = error.message;
+        }
+
         return {
           success: false,
-          error: error.message,
+          error: userFriendlyMessage,
           rssUrl: rssUrl
         };
       }
@@ -1338,9 +1972,39 @@ function createRSSProcessor(notificationService = null, anilistService = null) {
 
       } catch (error) {
         console.error('🧪 TEST: RSS continuous numeration test failed:', error);
+
+        // Create user-friendly error message
+        let userFriendlyMessage = 'Unknown error occurred';
+
+        if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+          userFriendlyMessage = 'Request timed out - the RSS server is taking too long to respond';
+        } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+          userFriendlyMessage = 'No internet connection or RSS server not found';
+        } else if (error.code === 'ECONNREFUSED') {
+          userFriendlyMessage = 'Connection refused - the RSS server may be down';
+        } else if (error.code === 'ECONNRESET') {
+          userFriendlyMessage = 'Connection was reset by the RSS server';
+        } else if (error.code === 'EHOSTUNREACH') {
+          userFriendlyMessage = 'RSS server is unreachable';
+        } else if (error.code === 'EPROTO') {
+          userFriendlyMessage = 'Protocol error - invalid SSL/TLS connection';
+        } else if (error.response?.status === 404) {
+          userFriendlyMessage = 'RSS feed not found (404) - check the URL';
+        } else if (error.response?.status === 403) {
+          userFriendlyMessage = 'Access forbidden (403) - you may be blocked';
+        } else if (error.response?.status === 500) {
+          userFriendlyMessage = 'RSS server error (500) - try again later';
+        } else if (error.response?.status === 503) {
+          userFriendlyMessage = 'RSS server temporarily unavailable (503)';
+        } else if (error.message?.includes('Invalid RSS')) {
+          userFriendlyMessage = 'Invalid RSS feed format';
+        } else if (error.message) {
+          userFriendlyMessage = error.message;
+        }
+
         return {
           success: false,
-          error: error.message,
+          error: userFriendlyMessage,
           rssUrl: rssUrl
         };
       }

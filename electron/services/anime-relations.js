@@ -269,12 +269,10 @@ function createAnimeRelationsManager() {
           destinationTitle = seasonSuffix;
         }
 
-        console.log(`🎬 Multi-season mapping: Rule ${ruleIndex + 1} -> "${destinationTitle}"`);
         return destinationTitle;
       } else {
         // Fallback if we have more rules than expected destinations
         const fallbackTitle = `${animeInfo.sourceTitle} Season ${ruleIndex + 1}`;
-        console.log(`🎬 Multi-season mapping (fallback): Rule ${ruleIndex + 1} -> "${fallbackTitle}"`);
         return fallbackTitle;
       }
     },
@@ -400,7 +398,6 @@ function createAnimeRelationsManager() {
             }
             return id;
           });
-          console.log(`🔄 Tilde replacement: ${originalIds.join('|')} -> ${ids.join('|')}`);
         }
 
         const [malId, kitsuId, anilistId] = ids;
@@ -554,7 +551,7 @@ function createAnimeRelationsManager() {
 
           // Log open-ended range handling
           if (source.episodes.isOpenEnded) {
-            console.log(`📺 Open-ended range mapping: Episode ${episodeNumber} (${source.episodes.start}-?) -> ${destination.episodes.start}-?`);
+            // console.log(`📺 Open-ended range mapping: Episode ${episodeNumber} (${source.episodes.start}-?) -> ${destination.episodes.start}-?`);
           }
 
           // Calculate mapped episode number

@@ -224,7 +224,7 @@ class Tokenizer {
     let matchingBracket = '';
     let charBegin = 0;
 
-    console.log(`🔍 TOKENIZER: Processing filename: "${this.filename}" (length: ${this.filename.length})`);
+    // console.log(`🔍 TOKENIZER: Processing filename: "${this.filename}" (length: ${this.filename.length})`);
 
     for (let i = 0; i <= this.filename.length; i++) {
       let currentChar = i < this.filename.length ? this.filename[i] : null;
@@ -236,19 +236,19 @@ class Tokenizer {
           if (currentChar === open) {
             matchingBracket = close;
             foundBracket = true;
-            console.log(`🔍 TOKENIZER: Found opening bracket '${open}' at position ${i}`);
+            // console.log(`🔍 TOKENIZER: Found opening bracket '${open}' at position ${i}`);
             break;
           }
         }
       } else if (isBracketOpen && currentChar === matchingBracket) {
         foundBracket = true;
-        console.log(`🔍 TOKENIZER: Found closing bracket '${currentChar}' at position ${i}`);
+        // console.log(`🔍 TOKENIZER: Found closing bracket '${currentChar}' at position ${i}`);
       }
 
       if (foundBracket || i === this.filename.length) {
         const size = i - charBegin;
         if (size > 0) {
-          console.log(`🔍 TOKENIZER: Processing segment: "${this.filename.substring(charBegin, i)}" (enclosed: ${isBracketOpen})`);
+          // console.log(`🔍 TOKENIZER: Processing segment: "${this.filename.substring(charBegin, i)}" (enclosed: ${isBracketOpen})`);
           this.tokenizeByPreidentified(isBracketOpen, charBegin, size);
         }
 
@@ -261,7 +261,7 @@ class Tokenizer {
       }
     }
 
-    console.log(`🔍 TOKENIZER: Bracket tokenization complete, ${this.tokens.length} tokens so far`);
+    // console.log(`🔍 TOKENIZER: Bracket tokenization complete, ${this.tokens.length} tokens so far`);
 
     // Validate delimiters once at the end
     this.validateDelimiterTokens();
@@ -269,18 +269,18 @@ class Tokenizer {
 
   tokenizeByPreidentified(enclosed, offset, size) {
     // For now, skip preidentified tokens and go straight to delimiter tokenization
-    console.log(`🔍 TOKENIZER: tokenizeByPreidentified called with offset=${offset}, size=${size}, enclosed=${enclosed}`);
+    // console.log(`🔍 TOKENIZER: tokenizeByPreidentified called with offset=${offset}, size=${size}, enclosed=${enclosed}`);
     this.tokenizeByDelimiters(enclosed, offset, size);
   }
 
   tokenizeByDelimiters(enclosed, offset, size) {
     const content = this.filename.substring(offset, offset + size);
-    console.log(`🔍 TOKENIZER: tokenizeByDelimiters processing: "${content}" (enclosed=${enclosed})`);
+    // console.log(`🔍 TOKENIZER: tokenizeByDelimiters processing: "${content}" (enclosed=${enclosed})`);
     const delimiters = this.getDelimiters(content);
 
     if (delimiters.length === 0) {
       if (content.trim()) {
-        console.log(`🔍 TOKENIZER: Adding single token: "${content}"`);
+        // console.log(`🔍 TOKENIZER: Adding single token: "${content}"`);
         this.addToken(TokenCategory.UNKNOWN, enclosed, offset, size);
       }
       return;
@@ -336,8 +336,8 @@ class Tokenizer {
       token.category = TokenCategory.INVALID;
     };
 
-    console.log(`🔍 TOKENIZER: Before delimiter validation: ${this.tokens.length} tokens`);
-    console.log(`🔍 TOKENIZER: Tokens before validation:`, this.tokens.map(t => `${t.content}(${t.category})`));
+    // console.log(`🔍 TOKENIZER: Before delimiter validation: ${this.tokens.length} tokens`);
+    // console.log(`🔍 TOKENIZER: Tokens before validation:`, this.tokens.map(t => `${t.content}(${t.category})`));
 
     for (let i = 0; i < this.tokens.length; i++) {
       const token = this.tokens[i];
@@ -367,8 +367,8 @@ class Tokenizer {
 
     // Remove invalid tokens
     this.tokens = this.tokens.filter(token => token.category !== TokenCategory.INVALID);
-    console.log(`🔍 TOKENIZER: After delimiter validation: ${this.tokens.length} tokens`);
-    console.log(`🔍 TOKENIZER: Tokens after validation:`, this.tokens.map(t => `${t.content}(${t.category})`));
+    // console.log(`🔍 TOKENIZER: After delimiter validation: ${this.tokens.length} tokens`);
+    // console.log(`🔍 TOKENIZER: Tokens after validation:`, this.tokens.map(t => `${t.content}(${t.category})`));
   }
 }
 
@@ -859,7 +859,7 @@ class Anitomy {
       return false;
     }
 
-    console.log(`🔍 ANITOMY: Starting parse of: "${filename}"`);
+    // console.log(`🔍 ANITOMY: Starting parse of: "${filename}"`);
     let processedFilename = filename;
 
     // Extract file extension
@@ -883,13 +883,13 @@ class Anitomy {
     this.elements.insert(ElementCategory.FILE_NAME, processedFilename);
 
     // Tokenize
-    console.log(`🔍 ANITOMY: Tokenizing: "${processedFilename}"`);
+    // console.log(`🔍 ANITOMY: Tokenizing: "${processedFilename}"`);
     const tokenizer = new Tokenizer(processedFilename, this.elements, this.options, this.tokens);
     if (!tokenizer.tokenize()) {
       console.log(`❌ ANITOMY: Tokenization failed`);
       return false;
     }
-    console.log(`🔍 ANITOMY: Tokenization complete, ${this.tokens.length} tokens created`);
+    // console.log(`🔍 ANITOMY: Tokenization complete, ${this.tokens.length} tokens created`);
 
     // Parse
     const parser = new Parser(this.elements, this.options, this.tokens);
