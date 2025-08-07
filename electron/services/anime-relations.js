@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { get } = require('../lib/http-client');
 const { configOperations, animeRelationsOperations } = require('../lib/database');
 
 const ANIME_RELATIONS_URL = 'https://raw.githubusercontent.com/erengy/anime-relations/refs/heads/master/anime-relations.txt';
@@ -67,12 +67,7 @@ function createAnimeRelationsManager() {
     async fetchAndParseRelations() {
       try {
         console.log('Fetching anime relations data...');
-        const response = await axios.get(ANIME_RELATIONS_URL, {
-          timeout: 30000,
-          headers: {
-            'User-Agent': 'MoeDownloader/1.0'
-          }
-        });
+        const response = await get(ANIME_RELATIONS_URL);
 
         const parsedData = this.parseRelationsText(response.data);
         relationsData = parsedData;

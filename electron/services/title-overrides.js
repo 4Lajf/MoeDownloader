@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { get } = require('../lib/http-client');
 const fs = require('fs');
 const path = require('path');
 const { configOperations } = require('../lib/database');
@@ -81,10 +81,8 @@ function createTitleOverridesManager() {
     async fetchAndParseOverrides() {
       try {
         console.log('Fetching title overrides data...');
-        const response = await axios.get(TITLE_OVERRIDES_URL, {
-          timeout: 30000,
+        const response = await get(TITLE_OVERRIDES_URL, {
           headers: {
-            'User-Agent': 'MoeDownloader/1.0',
             'Cache-Control': 'no-cache'
           }
         });

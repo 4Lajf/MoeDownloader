@@ -191,8 +191,7 @@ async function main() {
     titleBarStyle: 'hidden',
     backgroundColor: '#00000000', // Transparent background
     webPreferences: {
-      // devTools: !app.isPackaged,
-      devTools: true,
+      devTools: !app.isPackaged,
       preload: join(__dirname, "preload.js"),
       nodeIntegration: false,
       contextIsolation: true,
@@ -515,8 +514,6 @@ function updateLoaderProgress(text: string, progress: number) {
     });
   }
 }
-
-
 
 // App initialization
 ipcMain.handle("initialize-app", async () => {

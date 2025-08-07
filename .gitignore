@@ -3,4 +3,3 @@ dist/
 build/
 package-lock.json
 .DS_Store
-known_issues.txt

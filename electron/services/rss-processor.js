@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { get } = require('../lib/http-client');
 const xml2js = require('xml2js');
 const {
   whitelistOperations,
@@ -371,12 +371,7 @@ function createRSSProcessor(notificationService = null, anilistService = null, a
         console.log(`📡 RSS: Processing ${feedType} feed: ${rssUrl}`);
 
         // Fetch RSS feed
-        const response = await axios.get(rssUrl, {
-          timeout: 30000,
-          headers: {
-            'User-Agent': 'MoeDownloader/1.0'
-          }
-        });
+        const response = await get(rssUrl);
 
         // Parse XML
         const parser = new xml2js.Parser();
@@ -740,8 +735,7 @@ function createRSSProcessor(notificationService = null, anilistService = null, a
         console.log(`🔍 RSS: Searching ${feedType} with query: "${query}"`);
 
         // Fetch the RSS feed
-        const response = await axios.get(searchUrl, {
-          timeout: 30000,
+        const response = await get(searchUrl, {
           headers: {
             'User-Agent': 'MoeDownloader/1.0.0 (RSS Search)'
           }
@@ -1241,12 +1235,7 @@ function createRSSProcessor(notificationService = null, anilistService = null, a
 
     async testFeed(url) {
       try {
-        const response = await axios.get(url, {
-          timeout: 10000,
-          headers: {
-            'User-Agent': 'MoeDownloader/1.0'
-          }
-        });
+        const response = await get(url, { timeout: 10000 });
 
         const parser = new xml2js.Parser();
         const testResult = await parser.parseStringPromise(response.data);
@@ -1300,79 +1289,10 @@ function createRSSProcessor(notificationService = null, anilistService = null, a
       }
     },
 
-    async testFeed(rssUrl) {
-      try {
-
-        // Fetch RSS feed
-        const response = await axios.get(rssUrl, {
-          timeout: 10000,
-          headers: {
-            'User-Agent': 'MoeDownloader/1.0'
-          }
-        });
-
-        // Parse XML
-        const parser = new xml2js.Parser();
-        const parsedResult = await parser.parseStringPromise(response.data);
-
-        if (!parsedResult.rss || !parsedResult.rss.channel || !parsedResult.rss.channel[0].item) {
-          throw new Error('Invalid RSS feed format');
-        }
-
-        const items = parsedResult.rss.channel[0].item;
-        const channelTitle = parsedResult.rss.channel[0].title?.[0] || 'Unknown';
-
-        return {
-          success: true,
-          itemCount: items.length,
-          channelTitle,
-          message: `RSS feed is valid and contains ${items.length} items`
-        };
-      } catch (error) {
-        console.error('Error testing RSS feed:', error);
-
-        // Create user-friendly error message
-        let userFriendlyMessage = 'Unknown error occurred';
-
-        if (error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
-          userFriendlyMessage = 'Request timed out - the RSS server is taking too long to respond';
-        } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
-          userFriendlyMessage = 'No internet connection or RSS server not found';
-        } else if (error.code === 'ECONNREFUSED') {
-          userFriendlyMessage = 'Connection refused - the RSS server may be down';
-        } else if (error.code === 'ECONNRESET') {
-          userFriendlyMessage = 'Connection was reset by the RSS server';
-        } else if (error.code === 'EHOSTUNREACH') {
-          userFriendlyMessage = 'RSS server is unreachable';
-        } else if (error.code === 'EPROTO') {
-          userFriendlyMessage = 'Protocol error - invalid SSL/TLS connection';
-        } else if (error.response?.status === 404) {
-          userFriendlyMessage = 'RSS feed not found (404) - check the URL';
-        } else if (error.response?.status === 403) {
-          userFriendlyMessage = 'Access forbidden (403) - you may be blocked';
-        } else if (error.response?.status === 500) {
-          userFriendlyMessage = 'RSS server error (500) - try again later';
-        } else if (error.response?.status === 503) {
-          userFriendlyMessage = 'RSS server temporarily unavailable (503)';
-        } else if (error.message?.includes('Invalid RSS')) {
-          userFriendlyMessage = 'Invalid RSS feed format';
-        } else if (error.message) {
-          userFriendlyMessage = error.message;
-        }
-
-        throw new Error(`RSS feed test failed: ${userFriendlyMessage}`);
-      }
-    },
-
     async testRSSDownload(rssUrl, options = {}) {
       try {
         // Fetch RSS feed using the same logic as processFeed
-        const response = await axios.get(rssUrl, {
-          timeout: 30000,
-          headers: {
-            'User-Agent': 'MoeDownloader/1.0'
-          }
-        });
+        const response = await get(rssUrl);
 
         // Parse XML
         const parser = new xml2js.Parser();
@@ -1715,12 +1635,7 @@ function createRSSProcessor(notificationService = null, anilistService = null, a
         console.log('🧪 TEST: Starting RSS continuous numeration test for:', rssUrl);
 
         // Fetch RSS feed
-        const response = await axios.get(rssUrl, {
-          timeout: 30000,
-          headers: {
-            'User-Agent': 'MoeDownloader/1.0'
-          }
-        });
+        const response = await get(rssUrl);
 
         // Parse XML
         const parser = new xml2js.Parser();

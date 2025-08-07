@@ -11,9 +11,7 @@
     "dev:renderer": "cd renderer && npm run dev",
     "dev:electron": "npm run build:electron && electron .",
     "copy-js": "node scripts/copy-js-files.js",
-    "format": "prettier --write .",
-    "test": "node electron/test/run-tests.js",
-    "test:anilist": "node electron/test/anilist-integration-test.js"
+    "format": "prettier --write ."
   },
   "build": {
     "appId": "com.moedownloader.app",

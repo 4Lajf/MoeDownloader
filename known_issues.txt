@@ -1,0 +1,9 @@
+Judas - Grand Blue Dreaming S02E05 does not map to Grand Blue Season 2, but the overrdies can't change that becuase the episode numeration is correct and seasons are not accounted for.
+When having multiple language versions like To Be Hero X, the app will download the first one since it doesn't differentiate CA and JP
+Judas - does not support titles like "Isekai Mokushiroku Mynoghra (Apocalypse Bringer Mynoghra: World Conquest Starts with the Civilization of Ruin)"
+Same with any other group that uses english title in parenthasies like "[Kaleido-subs] 9-nine- Shihaisha no Oukan (9-nine- Ruler's Crown) - 01 (S01E01) - (WEB 1080p HEVC x265 10-bit E-AC3) [C5867E58]"
+Anilist - "Tensei shitara Dainana Ouji Datta node, Kimama ni Majutsu wo Kiwamemasu 2nd Season - 4" nie znajduje bo spacja "Dai nana"
+
+Start RSS monitoring on app launch doesn't work
+The app process name is still "electron.app.Electron" can you change it to our application name
+updater

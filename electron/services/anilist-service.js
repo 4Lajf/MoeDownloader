@@ -1,4 +1,4 @@
-const axios = require('axios');
+const { post } = require('../lib/http-client');
 const { configOperations } = require('../lib/database');
 
 const ANILIST_API_URL = 'https://graphql.anilist.co';
@@ -398,12 +398,11 @@ function createAniListService() {
       }
 
       try {
-        const response = await axios.post(ANILIST_API_URL, {
+        const response = await post(ANILIST_API_URL, {
           query,
           variables
         }, {
-          headers,
-          timeout: 30000
+          headers
         });
 
         if (response.data.errors) {

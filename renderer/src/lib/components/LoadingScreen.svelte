@@ -1,6 +1,6 @@
 <div class="loading-screen">
 	<div class="loading-content">
-		<img src="/loading.gif" alt="Loading..." class="loading-gif" />
+		<img src="./loading.gif" alt="Loading..." class="loading-gif" />
 		<div class="progress-container">
 			<div class="progress-bar"></div>
 		</div>
