@@ -9,16 +9,23 @@ const { createDownloadManager } = require("./download-manager");
 const { createTitleOverridesManager } = require("./title-overrides");
 const { createActivityLogger } = require("./activity-logger");
 
-function createAppService(sharedRSSProcessor = null, sharedDownloadManager = null, sharedActivityLogger = null) {
+function createAppService(sharedRSSProcessor = null, sharedDownloadManager = null, sharedActivityLogger = null, sharedTitleOverridesManager = null) {
   let rssProcessor = sharedRSSProcessor;
   let downloadManager = sharedDownloadManager;
-  let titleOverridesManager = null;
+  let titleOverridesManager = sharedTitleOverridesManager;
   let activityLogger = sharedActivityLogger;
   let rssScheduleActive = false;
   let rssInterval = null;
+  let isInitialized = false;
 
   const service = {
     async initialize() {
+      // Prevent multiple initializations
+      if (isInitialized) {
+        console.log('App service already initialized, skipping...');
+        return { success: true };
+      }
+
       try {
         // Create activity logger if not provided
         if (!activityLogger) {
@@ -35,12 +42,17 @@ function createAppService(sharedRSSProcessor = null, sharedDownloadManager = nul
           downloadManager = createDownloadManager();
         }
 
-        // Initialize title overrides manager
-        titleOverridesManager = createTitleOverridesManager();
-        await titleOverridesManager.initialize();
+        // Initialize title overrides manager if not provided
+        if (!titleOverridesManager) {
+          titleOverridesManager = createTitleOverridesManager();
+          await titleOverridesManager.initialize();
+        }
 
         // Log app initialization
         activityLogger.appEvent('Application Started', 'MoeDownloader has been initialized and is ready to use');
+
+        // Mark as initialized
+        isInitialized = true;
         return { success: true };
       } catch (error) {
         console.error('Failed to initialize app service:', error);

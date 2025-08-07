@@ -66,10 +66,11 @@ function createDownloadManager(notificationService = null) {
         console.error('💥 QUEUE: Error processing download queue:', error);
       }
 
-      // Periodic cleanup of orphaned torrents (every 20 cycles = ~100 seconds)
+      // Periodic cleanup of orphaned torrents (every 60 cycles = 5 minutes)
       if (!this.cleanupCounter) this.cleanupCounter = 0;
       this.cleanupCounter++;
-      if (this.cleanupCounter >= 20) {
+      if (this.cleanupCounter >= 60) {
+        console.log('🧹 Running automatic cleanup of orphaned torrents and deleted files...');
         this.cleanupOrphanedTorrents();
         this.cleanupCounter = 0;
       }
@@ -352,7 +353,35 @@ function createDownloadManager(notificationService = null) {
       }
     },
 
+    async pauseAllDownloads() {
+      try {
+        const allDownloads = downloadOperations.getAll();
+        const activeDownloads = allDownloads.filter(d => d.status === 'downloading');
 
+        let pausedCount = 0;
+        const errors = [];
+
+        for (const download of activeDownloads) {
+          try {
+            await this.pauseDownload(download.id);
+            pausedCount++;
+          } catch (error) {
+            console.error(`Failed to pause download ${download.id}:`, error);
+            errors.push({ id: download.id, error: error.message });
+          }
+        }
+
+        return {
+          success: true,
+          pausedCount,
+          totalActive: activeDownloads.length,
+          errors
+        };
+      } catch (error) {
+        console.error('💥 PAUSE ALL: Error pausing all downloads:', error);
+        throw error;
+      }
+    },
 
     async removeDownload(downloadId) {
       try {
@@ -470,19 +499,29 @@ function createDownloadManager(notificationService = null) {
       }));
     },
 
-    // Clean up any orphaned torrents in the WebTorrent client
+    // Clean up any orphaned torrents in the WebTorrent client and check for externally deleted files
     cleanupOrphanedTorrents() {
-      if (!client) return;
+      if (!client) {
+        console.log('⚠️ WebTorrent client not available, skipping torrent cleanup but checking for deleted files...');
+        // Still check for deleted files even if client is not available
+        const dbDownloads = downloadOperations.getAll();
+        this.checkForDeletedFiles(dbDownloads);
+        return;
+      }
 
       try {
         const dbDownloads = downloadOperations.getAll();
         const activeDownloads = dbDownloads
           .filter(d => d.status === 'downloading' || d.status === 'queued' || d.status === 'paused');
 
-        // Skip cleanup if there are actively downloading torrents to avoid interrupting them
+        // Always check for completed downloads with externally deleted files first
+        console.log('🔍 Checking for externally deleted files...');
+        this.checkForDeletedFiles(dbDownloads);
+
+        // Skip torrent cleanup if there are actively downloading torrents to avoid interrupting them
         const hasActiveDownloads = activeDownloads.some(d => d.status === 'downloading');
         if (hasActiveDownloads) {
-          console.log('Skipping cleanup - active downloads in progress');
+          console.log('⚠️ Skipping torrent cleanup - active downloads in progress, but deleted files check completed');
           return;
         }
 
@@ -524,6 +563,62 @@ function createDownloadManager(notificationService = null) {
         }
       } catch (error) {
         console.error('Error cleaning up orphaned torrents:', error);
+      }
+    },
+
+    // Check for completed downloads where files were deleted externally
+    checkForDeletedFiles(dbDownloads) {
+      const fs = require('fs');
+      const path = require('path');
+
+      try {
+        const completedDownloads = dbDownloads.filter(d => d.status === 'completed');
+        const downloadPath = this.getDownloadPath();
+        let deletedCount = 0;
+
+        console.log(`🔍 Checking ${completedDownloads.length} completed downloads for deleted files...`);
+        console.log(`📁 Download path: ${downloadPath}`);
+
+        for (const download of completedDownloads) {
+          // Check both fileName (camelCase) and file_name (snake_case) for compatibility
+          const fileName = download.fileName || download.file_name;
+
+          if (fileName) {
+            const filePath = path.join(downloadPath, fileName);
+            console.log(`🔍 Checking file: ${filePath}`);
+
+            // Check if the file still exists
+            if (!fs.existsSync(filePath)) {
+              console.log(`🗑️ File deleted externally, removing from downloads: ${fileName}`);
+
+              // Remove from database
+              downloadOperations.delete(download.id);
+
+              // Also remove from active torrents if it exists
+              const torrent = activeTorrents.get(download.id);
+              if (torrent) {
+                if (client && client.torrents.includes(torrent)) {
+                  client.remove(torrent, { destroyStore: true });
+                }
+                activeTorrents.delete(download.id);
+              }
+
+              deletedCount++;
+            } else {
+              console.log(`✅ File exists: ${fileName}`);
+            }
+          } else {
+            console.log(`⚠️ Download ${download.id} has no fileName or file_name: ${JSON.stringify(download)}`);
+          }
+        }
+
+        if (deletedCount > 0) {
+          console.log(`🧹 Cleaned up ${deletedCount} externally deleted file(s) from downloads list`);
+        } else {
+          console.log(`✅ No deleted files found during cleanup`);
+        }
+      } catch (error) {
+        console.error('Error checking for deleted files:', error);
       }
     },
 

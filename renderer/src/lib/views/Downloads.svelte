@@ -34,6 +34,13 @@
 	let downloadTitle = $state('');
 	let addingDownload = $state(false);
 	let downloadDirectory = $state('');
+	let pausingAll = $state(false);
+
+	// Pagination state
+	let currentPage = $state(1);
+	let itemsPerPage = $state(20);
+	let totalPages = $state(1);
+	let paginatedDownloads = $state<any[]>([]);
 
 	onMount(() => {
 		loadDownloads();
@@ -47,6 +54,7 @@
 	async function loadDownloads() {
 		try {
 			downloads = await ipc.getAllDownloads();
+			updatePagination();
 		} catch (error: any) {
 			console.error('Error loading downloads:', error);
 			toast.error('Failed to load downloads', {
@@ -55,6 +63,34 @@
 			});
 		} finally {
 			loading = false;
+		}
+	}
+
+	function updatePagination() {
+		totalPages = Math.ceil(downloads.length / itemsPerPage);
+		const startIndex = (currentPage - 1) * itemsPerPage;
+		const endIndex = startIndex + itemsPerPage;
+		paginatedDownloads = downloads.slice(startIndex, endIndex);
+	}
+
+	function goToPage(page: number) {
+		if (page >= 1 && page <= totalPages) {
+			currentPage = page;
+			updatePagination();
+		}
+	}
+
+	function nextPage() {
+		if (currentPage < totalPages) {
+			currentPage++;
+			updatePagination();
+		}
+	}
+
+	function prevPage() {
+		if (currentPage > 1) {
+			currentPage--;
+			updatePagination();
 		}
 	}
 
@@ -106,10 +142,6 @@
 		try {
 			await ipc.pauseDownload(id);
 			await loadDownloads();
-			toast.success('Download paused', {
-				description: 'The download has been paused.',
-				duration: 3000
-			});
 		} catch (error: any) {
 			console.error('Error pausing download:', error);
 			toast.error('Failed to pause download', {
@@ -123,16 +155,40 @@
 		try {
 			await ipc.resumeDownload(id);
 			await loadDownloads();
-			toast.success('Download resumed', {
-				description: 'The download has been resumed.',
-				duration: 3000
-			});
 		} catch (error: any) {
 			console.error('Error resuming download:', error);
 			toast.error('Failed to resume download', {
 				description: `Error resuming download: ${error?.message || 'Unknown error'}`,
 				duration: 5000
 			});
+		}
+	}
+
+	async function pauseAllDownloads() {
+		try {
+			pausingAll = true;
+			const result = await ipc.pauseAllDownloads();
+			await loadDownloads();
+
+			if (result.pausedCount > 0) {
+				toast.success('Downloads paused', {
+					description: `Paused ${result.pausedCount} active download${result.pausedCount === 1 ? '' : 's'}.`,
+					duration: 3000
+				});
+			} else {
+				toast.info('No active downloads', {
+					description: 'There are no active downloads to pause.',
+					duration: 3000
+				});
+			}
+		} catch (error: any) {
+			console.error('Error pausing all downloads:', error);
+			toast.error('Failed to pause downloads', {
+				description: `Error pausing downloads: ${error?.message || 'Unknown error'}`,
+				duration: 5000
+			});
+		} finally {
+			pausingAll = false;
 		}
 	}
 
@@ -264,7 +320,17 @@
 			<h1 class="text-3xl font-bold">Downloads</h1>
 			<p class="text-muted-foreground">Manage your anime downloads</p>
 		</div>
-		<div>
+		<div class="flex gap-2">
+			<Button
+				variant="outline"
+				class="gap-2"
+				onclick={pauseAllDownloads}
+				disabled={pausingAll || downloads.filter(d => d.status === 'downloading').length === 0}
+			>
+				<Pause class="w-4 h-4" />
+				{pausingAll ? 'Pausing...' : 'Pause All'}
+			</Button>
+
 			<Dialog.Root bind:open={showManualDialog}>
 			<Dialog.Trigger>
 				<Button variant="success" class="gap-2">
@@ -334,7 +400,7 @@
 		</Card>
 	{:else}
 		<div class="space-y-4">
-			{#each downloads as download}
+			{#each paginatedDownloads as download}
 				{@const StatusIcon = getStatusIcon(download.status)}
 				<Card>
 					<CardContent class="p-4">
@@ -480,5 +546,85 @@
 				</Card>
 			{/each}
 		</div>
+
+		<!-- Pagination Controls -->
+		{#if totalPages > 1}
+			<div class="flex items-center justify-between mt-6">
+				<div class="text-sm text-muted-foreground">
+					Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, downloads.length)} of {downloads.length} downloads
+				</div>
+
+				<div class="flex items-center gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						onclick={prevPage}
+						disabled={currentPage === 1}
+					>
+						Previous
+					</Button>
+
+					{#if totalPages <= 7}
+						{#each Array.from({length: totalPages}, (_, i) => i + 1) as page}
+							<Button
+								variant={currentPage === page ? "default" : "outline"}
+								size="sm"
+								onclick={() => goToPage(page)}
+							>
+								{page}
+							</Button>
+						{/each}
+					{:else}
+						<!-- Show first page -->
+						<Button
+							variant={currentPage === 1 ? "default" : "outline"}
+							size="sm"
+							onclick={() => goToPage(1)}
+						>
+							1
+						</Button>
+
+						{#if currentPage > 3}
+							<span class="px-2">...</span>
+						{/if}
+
+						<!-- Show pages around current page -->
+						{#each Array.from({length: 3}, (_, i) => Math.max(2, Math.min(totalPages - 1, currentPage - 1 + i))) as page}
+							{#if page > 1 && page < totalPages}
+								<Button
+									variant={currentPage === page ? "default" : "outline"}
+									size="sm"
+									onclick={() => goToPage(page)}
+								>
+									{page}
+								</Button>
+							{/if}
+						{/each}
+
+						{#if currentPage < totalPages - 2}
+							<span class="px-2">...</span>
+						{/if}
+
+						<!-- Show last page -->
+						<Button
+							variant={currentPage === totalPages ? "default" : "outline"}
+							size="sm"
+							onclick={() => goToPage(totalPages)}
+						>
+							{totalPages}
+						</Button>
+					{/if}
+
+					<Button
+						variant="outline"
+						size="sm"
+						onclick={nextPage}
+						disabled={currentPage === totalPages}
+					>
+						Next
+					</Button>
+				</div>
+			</div>
+		{/if}
 	{/if}
 </div>

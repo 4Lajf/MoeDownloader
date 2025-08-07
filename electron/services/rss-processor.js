@@ -15,22 +15,42 @@ const { createTitleOverridesManager } = require('./title-overrides');
 const { ALLOWED_FANSUB_GROUPS } = require('../lib/constants');
 const { getDatabase } = require('../lib/database');
 
-function createRSSProcessor(notificationService = null, anilistService = null, activityLogger = null) {
-  let animeRelationsManager = null;
-  let titleOverridesManager = null;
+function createRSSProcessor(notificationService = null, anilistService = null, activityLogger = null, sharedAnimeRelationsManager = null, sharedTitleOverridesManager = null) {
+  let animeRelationsManager = sharedAnimeRelationsManager;
+  let titleOverridesManager = sharedTitleOverridesManager;
 
   const processor = {
     async initialize() {
       try {
-        animeRelationsManager = createAnimeRelationsManager();
-        await animeRelationsManager.initialize();
+        // Use shared instances if provided, otherwise create new ones
+        if (!animeRelationsManager) {
+          animeRelationsManager = createAnimeRelationsManager();
+          await animeRelationsManager.initialize();
+        }
 
-        titleOverridesManager = createTitleOverridesManager();
-        await titleOverridesManager.initialize();
+        if (!titleOverridesManager) {
+          titleOverridesManager = createTitleOverridesManager();
+          await titleOverridesManager.initialize();
+        }
 
         console.log('RSS processor initialized');
       } catch (error) {
         console.error('Failed to initialize RSS processor:', error);
+      }
+    },
+
+    /**
+     * Detect the type of RSS feed based on URL
+     * @param {string} rssUrl - RSS feed URL
+     * @returns {string} - Feed type identifier
+     */
+    detectFeedType(rssUrl) {
+      if (rssUrl.includes('nyaa.si')) {
+        return 'Nyaa.si';
+      } else if (rssUrl.includes('tokyotosho.info')) {
+        return 'Tokyo Toshokan';
+      } else {
+        return 'Unknown';
       }
     },
 
@@ -346,6 +366,10 @@ function createRSSProcessor(notificationService = null, anilistService = null, a
 
     async processFeed(rssUrl) {
       try {
+        // Detect feed type for better logging and processing
+        const feedType = this.detectFeedType(rssUrl);
+        console.log(`📡 RSS: Processing ${feedType} feed: ${rssUrl}`);
+
         // Fetch RSS feed
         const response = await axios.get(rssUrl, {
           timeout: 30000,
@@ -363,7 +387,7 @@ function createRSSProcessor(notificationService = null, anilistService = null, a
         }
 
         const items = parsedResult.rss.channel[0].item;
-        console.log(`📡 RSS: Found ${items.length} items in feed`);
+        console.log(`📡 RSS: Found ${items.length} items in ${feedType} feed`);
 
         let processedCount = 0;
         let downloadedCount = 0;
@@ -695,13 +719,25 @@ function createRSSProcessor(notificationService = null, anilistService = null, a
 
     async searchFeed(query) {
       try {
-        // Construct the search URL
-        const baseUrl = 'https://nyaa.si/?page=rss&c=1_2&f=0';
-        // Replace spaces with + and encode special characters properly for nyaa.si
-        const encodedQuery = query.replace(/\s+/g, '+').replace(/[[\]]/g, (match) => {
-          return match === '[' ? '%5B' : '%5D';
-        });
-        const searchUrl = `${baseUrl}&q=${encodedQuery}`;
+        // Get the configured RSS URL and construct search URL based on feed type
+        const configuredUrl = configOperations.get('rss_feed_url') || 'https://nyaa.si/?page=rss&c=1_2&f=0';
+        const feedType = this.detectFeedType(configuredUrl);
+
+        let searchUrl;
+        if (feedType === 'Tokyo Toshokan') {
+          // For Tokyo Toshokan, use their search format
+          const encodedQuery = encodeURIComponent(query);
+          searchUrl = `https://www.tokyotosho.info/rss.php?filter=1&entries=750&terms=${encodedQuery}`;
+        } else {
+          // Default to nyaa.si format
+          const baseUrl = 'https://nyaa.si/?page=rss&c=1_2&f=0';
+          const encodedQuery = query.replace(/\s+/g, '+').replace(/[[\]]/g, (match) => {
+            return match === '[' ? '%5B' : '%5D';
+          });
+          searchUrl = `${baseUrl}&q=${encodedQuery}`;
+        }
+
+        console.log(`🔍 RSS: Searching ${feedType} with query: "${query}"`);
 
         // Fetch the RSS feed
         const response = await axios.get(searchUrl, {

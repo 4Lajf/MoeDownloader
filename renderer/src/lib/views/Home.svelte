@@ -273,16 +273,16 @@
 				{rssMonitoring ? 'Stopping...' : 'Starting...'}
 			{:else if rssMonitoring}
 				<Pause class="mr-2 h-4 w-4" />
-				Stop RSS Monitor
+				Stop Auto-Download
 			{:else}
 				<Play class="mr-2 h-4 w-4" />
-				Start RSS Monitor
+				Start Auto-Download
 			{/if}
 		</Button>
 
 		<Button onclick={manualRSSCheck} variant="outline-info">
 			<Rss class="mr-2 h-4 w-4" />
-			Check RSS Now
+			Check New Releases Now
 		</Button>
 	</div>
 

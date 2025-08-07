@@ -11,10 +11,10 @@ const {
  * AniList Synchronization Service
  * Handles automatic synchronization of AniList lists with the download whitelist
  */
-function createAniListSyncService(notificationService) {
+function createAniListSyncService(notificationService, sharedAniListService = null) {
   let syncInterval = null;
   let isSyncing = false;
-  let anilistService = null;
+  let anilistService = sharedAniListService;
 
   const service = {
     /**
@@ -22,8 +22,11 @@ function createAniListSyncService(notificationService) {
      */
     async initialize() {
       try {
-        anilistService = createAniListService();
-        await anilistService.initialize();
+        // Use shared instance if provided, otherwise create new one
+        if (!anilistService) {
+          anilistService = createAniListService();
+          await anilistService.initialize();
+        }
 
         // Start periodic sync
         this.startPeriodicSync();

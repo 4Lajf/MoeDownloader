@@ -36,6 +36,8 @@
 		onConfirm: () => {}
 	});
 
+	let isCleaningTorrents = $state(false);
+
 	// Statistics
 	let stats = {
 		totalFiles: 0,
@@ -229,6 +231,29 @@
 		}
 	}
 
+	async function cleanupOrphanedTorrents() {
+		try {
+			isCleaningTorrents = true;
+			const result = await ipc.cleanupTorrents();
+
+			toast.success('Cleanup completed', {
+				description: 'Orphaned torrents and deleted files have been cleaned up.',
+				duration: 3000
+			});
+
+			// Refresh data to show updated state
+			await loadData();
+		} catch (error: any) {
+			console.error('Error cleaning up torrents:', error);
+			toast.error('Cleanup failed', {
+				description: `Error: ${error?.message || 'Unknown error'}`,
+				duration: 5000
+			});
+		} finally {
+			isCleaningTorrents = false;
+		}
+	}
+
 	function formatDate(dateString: string) {
 		return new Date(dateString).toLocaleString();
 	}
@@ -389,6 +414,16 @@
 						Clear Selected Entry
 					</Button>
 				{/if}
+
+				<Button variant="outline" onclick={cleanupOrphanedTorrents} disabled={isCleaningTorrents}>
+					{#if isCleaningTorrents}
+						<RefreshCw class="w-4 h-4 mr-2 animate-spin" />
+						Cleaning...
+					{:else}
+						<RefreshCw class="w-4 h-4 mr-2" />
+						Clean Orphaned Torrents
+					{/if}
+				</Button>
 
 				<Button variant="info" onclick={debugProcessedFiles}>
 					<Database class="w-4 h-4 mr-2" />

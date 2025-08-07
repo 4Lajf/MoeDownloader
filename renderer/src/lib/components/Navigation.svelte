@@ -416,10 +416,10 @@
 				{rssMonitoring ? 'Stopping...' : 'Starting...'}
 			{:else if rssMonitoring}
 				<Pause class="w-4 h-4 mr-2" />
-				Stop RSS Monitor
+				Stop Auto-Download
 			{:else}
 				<Play class="w-4 h-4 mr-2" />
-				Start RSS Monitor
+				Start Auto-Download
 			{/if}
 		</Button>
 	</div>

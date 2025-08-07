@@ -288,7 +288,7 @@ async function createTables() {
 
 	// Insert default configuration
 	const defaultConfig = [
-		['rss_feed_url', 'https://nyaa.si/?page=rss&c=1_2&f=0'],
+		['rss_feed_url', 'https://www.tokyotosho.info/rss.php?filter=1&entries=750'],
 		['check_interval_minutes', '5'],
 		['downloads_directory', 'downloads'],
 		['max_concurrent_downloads', '3'],
@@ -359,23 +359,30 @@ const whitelistOperations = {
 	add(entry) {
 		try {
 			const stmt = db.prepare(`
-				INSERT INTO whitelist (title, keywords, exclude_keywords, quality, enabled, preferred_group, source_type, anilist_id, anilist_account_id, auto_sync, title_romaji, title_english, title_synonyms)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				INSERT INTO whitelist (title, keywords, exclude_keywords, quality, enabled, preferred_group, source_type, anilist_id, anilist_account_id, auto_sync, title_romaji, title_english, title_synonyms, allowed_groups, allowed_qualities)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`);
+
+			// Handle multi-select fields
+			const allowedGroups = entry.allowed_groups || (entry.preferred_group && entry.preferred_group !== 'any' ? [entry.preferred_group] : []);
+			const allowedQualities = entry.allowed_qualities || (entry.quality && entry.quality !== 'any' ? [entry.quality] : []);
+
 			const addResult = stmt.run(
 				entry.title,
 				entry.keywords || '',
 				entry.exclude_keywords || '',
-				entry.quality || '1080p',
+				entry.quality || '1080p', // Keep for backward compatibility
 				entry.enabled ? 1 : 0,
-				entry.preferred_group || 'any',
+				entry.preferred_group || 'any', // Keep for backward compatibility
 				entry.source_type || 'manual',
 				entry.anilist_id || null,
 				entry.anilist_account_id || null,
 				entry.auto_sync ? 1 : 0,
 				entry.title_romaji || null,
 				entry.title_english || null,
-				entry.title_synonyms ? JSON.stringify(entry.title_synonyms) : null
+				entry.title_synonyms ? JSON.stringify(entry.title_synonyms) : null,
+				JSON.stringify(allowedGroups),
+				JSON.stringify(allowedQualities)
 			);
 			return addResult;
 		} catch (error) {
@@ -397,16 +404,21 @@ const whitelistOperations = {
 				UPDATE whitelist
 				SET title = ?, keywords = ?, exclude_keywords = ?, quality = ?, enabled = ?,
 					preferred_group = ?, source_type = ?, anilist_id = ?, anilist_account_id = ?, auto_sync = ?,
-					title_romaji = ?, title_english = ?, title_synonyms = ?, updated_at = CURRENT_TIMESTAMP
+					title_romaji = ?, title_english = ?, title_synonyms = ?, allowed_groups = ?, allowed_qualities = ?, updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
 			`);
+
+			// Handle multi-select fields
+			const allowedGroups = entry.allowed_groups || (entry.preferred_group && entry.preferred_group !== 'any' ? [entry.preferred_group] : []);
+			const allowedQualities = entry.allowed_qualities || (entry.quality && entry.quality !== 'any' ? [entry.quality] : []);
+
 			const updateResult = stmt.run(
 				entry.title,
 				entry.keywords || '',
 				entry.exclude_keywords || '',
-				entry.quality || '1080p',
+				entry.quality || '1080p', // Keep for backward compatibility
 				entry.enabled ? 1 : 0,
-				entry.preferred_group || 'any',
+				entry.preferred_group || 'any', // Keep for backward compatibility
 				entry.source_type || 'manual',
 				entry.anilist_id || null,
 				entry.anilist_account_id || null,
@@ -414,6 +426,8 @@ const whitelistOperations = {
 				entry.title_romaji || null,
 				entry.title_english || null,
 				entry.title_synonyms ? JSON.stringify(entry.title_synonyms) : null,
+				JSON.stringify(allowedGroups),
+				JSON.stringify(allowedQualities),
 				id
 			);
 			return updateResult;
@@ -1006,6 +1020,32 @@ async function runMigrations() {
 				console.log(`Added column ${column.name} to whitelist table`);
 			}
 		}
+
+		// Add multi-select columns for groups and qualities
+		const multiSelectColumns = [
+			{ name: 'allowed_groups', type: 'TEXT' }, // JSON array of allowed groups
+			{ name: 'allowed_qualities', type: 'TEXT' } // JSON array of allowed qualities
+		];
+
+		for (const column of multiSelectColumns) {
+			if (!whitelistColumns.includes(column.name)) {
+				db.exec(`ALTER TABLE whitelist ADD COLUMN ${column.name} ${column.type}`);
+				console.log(`Added column ${column.name} to whitelist table`);
+			}
+		}
+
+		// Migrate existing single-value data to multi-select format
+		const existingEntries = db.prepare('SELECT id, quality, preferred_group FROM whitelist WHERE allowed_groups IS NULL OR allowed_qualities IS NULL').all();
+
+		for (const entry of existingEntries) {
+			const allowedGroups = entry.preferred_group && entry.preferred_group !== 'any' ? [entry.preferred_group] : [];
+			const allowedQualities = entry.quality && entry.quality !== 'any' ? [entry.quality] : [];
+
+			db.prepare('UPDATE whitelist SET allowed_groups = ?, allowed_qualities = ? WHERE id = ?')
+				.run(JSON.stringify(allowedGroups), JSON.stringify(allowedQualities), entry.id);
+		}
+
+		console.log(`Migrated ${existingEntries.length} whitelist entries to multi-select format`);
 
 		// Drop the unique constraint on title and recreate with new constraint
 		try {

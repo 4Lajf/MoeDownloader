@@ -131,6 +131,14 @@ export const CONTEXT_BRIDGE = {
     return await ipcRenderer.invoke('resume-download', id);
   },
 
+  pauseAllDownloads: async (): Promise<any> => {
+    return await ipcRenderer.invoke('pause-all-downloads');
+  },
+
+  cleanupTorrents: async (): Promise<any> => {
+    return await ipcRenderer.invoke('cleanup-torrents');
+  },
+
   addManualDownload: async (magnetLink: string, title?: string): Promise<any> => {
     return await ipcRenderer.invoke('add-manual-download', magnetLink, title);
   },

@@ -34,6 +34,7 @@ let anilistService: any;
 let animeRelationsManager: any;
 let anilistSyncService: any;
 let activityLogger: any;
+let sharedTitleOverridesManager: any;
 
 // Set app name for notifications and system integration
 app.setName('MoeDownloader');
@@ -85,7 +86,7 @@ async function main() {
   try {
     updateLoaderProgress('Initializing database...', 10);
     await initDatabase();
-    console.log('Database initialized successfully');
+    // Database logs its own initialization message
   } catch (error) {
     console.error('Failed to initialize database:', error);
 
@@ -105,16 +106,22 @@ async function main() {
   anilistService = createAniListService();
   animeRelationsManager = createAnimeRelationsManager();
   downloadManager = createDownloadManager(notificationService);
-  rssProcessor = createRSSProcessor(notificationService, anilistService, activityLogger);
+
+  // Create title overrides manager early so it can be shared
+  const { createTitleOverridesManager } = require('./services/title-overrides');
+  sharedTitleOverridesManager = createTitleOverridesManager();
+
+  // Create RSS processor with shared instances
+  rssProcessor = createRSSProcessor(notificationService, anilistService, activityLogger, animeRelationsManager, sharedTitleOverridesManager);
 
   // Initialize RSS processor
   updateLoaderProgress('Setting up RSS processor...', 35);
   await rssProcessor.initialize();
-  console.log('🔄 RSS processor initialized');
+  // RSS processor logs its own initialization message
 
   // Initialize app service with shared instances
   updateLoaderProgress('Initializing app service...', 50);
-  appService = createAppService(rssProcessor, downloadManager, activityLogger);
+  appService = createAppService(rssProcessor, downloadManager, activityLogger, sharedTitleOverridesManager);
   await appService.initialize();
   console.log('🔄 App service initialized');
 
@@ -130,8 +137,8 @@ async function main() {
     await anilistService.initialize();
     await animeRelationsManager.initialize();
 
-    // Initialize sync service
-    anilistSyncService = createAniListSyncService(notificationService);
+    // Initialize sync service with shared AniList service
+    anilistSyncService = createAniListSyncService(notificationService, anilistService);
     await anilistSyncService.initialize();
   } catch (error) {
     console.error('Failed to initialize AniList services:', error);
@@ -140,9 +147,9 @@ async function main() {
   // Initialize title overrides manager (after database is ready)
   updateLoaderProgress('Loading title overrides...', 80);
   try {
-    await titleOverridesManager.initialize();
+    await sharedTitleOverridesManager.initialize();
 
-    const userOverridesData = titleOverridesManager.getUserOverridesData();
+    const userOverridesData = sharedTitleOverridesManager.getUserOverridesData();
     console.log('🔍 MAIN APP STARTUP: User title overrides status:');
     if (userOverridesData && userOverridesData.overrides) {
       if (userOverridesData.overrides.exact_match) {
@@ -621,6 +628,10 @@ ipcMain.handle("resume-download", (_, id) => {
   return downloadManager.resumeDownload(id);
 });
 
+ipcMain.handle("pause-all-downloads", () => {
+  return downloadManager.pauseAllDownloads();
+});
+
 ipcMain.handle("cleanup-torrents", () => {
   return downloadManager.cleanupOrphanedTorrents();
 });
@@ -1027,13 +1038,11 @@ ipcMain.handle("get-processed-guids-count", () => {
   return guids.length;
 });
 
-// Title overrides operations
-const { createTitleOverridesManager } = require('./services/title-overrides');
-const titleOverridesManager = createTitleOverridesManager();
+// Title overrides operations - use the shared instance created during initialization
 
 ipcMain.handle("get-user-title-overrides", async () => {
   try {
-    return titleOverridesManager.getUserOverridesData();
+    return sharedTitleOverridesManager.getUserOverridesData();
   } catch (error) {
     console.error('Failed to get user title overrides:', error);
     throw error;
@@ -1048,8 +1057,8 @@ ipcMain.handle("save-user-title-overrides", async (_, overrides) => {
     // Write the overrides to the user file
     fs.writeFileSync(USER_OVERRIDES_FILE, JSON.stringify(overrides, null, 2), 'utf8');
 
-    // Reload user overrides in the IPC handler's manager
-    await titleOverridesManager.loadUserOverrides();
+    // Reload user overrides in the shared manager
+    await sharedTitleOverridesManager.loadUserOverrides();
 
     // Also reload user overrides in the RSS processor
     if (rssProcessor && rssProcessor.reloadUserOverrides) {
@@ -1069,7 +1078,7 @@ ipcMain.handle("save-user-title-overrides", async (_, overrides) => {
 
 ipcMain.handle("refresh-title-overrides", async () => {
   try {
-    await titleOverridesManager.forceRefresh();
+    await sharedTitleOverridesManager.forceRefresh();
     return { success: true };
   } catch (error) {
     console.error('Failed to refresh title overrides:', error);

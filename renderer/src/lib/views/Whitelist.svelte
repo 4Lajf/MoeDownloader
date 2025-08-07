@@ -11,23 +11,21 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Switch } from '$lib/components/ui/switch';
-	import { Select, SelectContent, SelectItem, SelectTrigger } from '$lib/components/ui/select';
 	import { Badge } from '$lib/components/ui/badge';
+	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { Plus, Trash2, Pencil, Save, X } from 'lucide-svelte';
 	import { toast } from 'svelte-sonner';
 	import ipc from '../../ipc';
 
-	// Quality options
+	// Quality options (removed 'any' since we now support multi-select)
 	const QUALITY_OPTIONS = [
 		{ value: '1080p', label: '1080p' },
 		{ value: '720p', label: '720p' },
-		{ value: '480p', label: '480p' },
-		{ value: 'any', label: 'Any' }
+		{ value: '480p', label: '480p' }
 	];
 
-	// Anime providers - only these groups are allowed for downloads
+	// Anime providers - only these groups are allowed for downloads (removed 'any' since we now support multi-select)
 	const ANIME_PROVIDERS = [
-		{ value: 'any', label: 'Any Allowed Provider' },
 		{ value: 'Erai-raws', label: 'Erai-raws' },
 		{ value: 'SubsPlease', label: 'SubsPlease' },
 		{ value: 'New-raws', label: 'New-raws' },
@@ -45,8 +43,8 @@
 		title: '',
 		keywords: '',
 		exclude_keywords: '',
-		quality: '1080p',
-		group: 'any',
+		allowed_qualities: ['1080p'] as string[],
+		allowed_groups: [] as string[],
 		enabled: true
 	});
 
@@ -54,16 +52,80 @@
 		await loadWhitelist();
 	});
 
+	// Helper functions for multi-select
+	function toggleQuality(quality: string, isChecked: boolean) {
+		if (isChecked) {
+			newEntry.allowed_qualities = [...newEntry.allowed_qualities, quality];
+		} else {
+			newEntry.allowed_qualities = newEntry.allowed_qualities.filter(q => q !== quality);
+		}
+	}
+
+	function toggleGroup(group: string, isChecked: boolean) {
+		if (isChecked) {
+			newEntry.allowed_groups = [...newEntry.allowed_groups, group];
+		} else {
+			newEntry.allowed_groups = newEntry.allowed_groups.filter(g => g !== group);
+		}
+	}
+
+	function toggleEntryQuality(entry: any, quality: string, isChecked: boolean) {
+		if (!entry.allowed_qualities) entry.allowed_qualities = [];
+		if (isChecked) {
+			entry.allowed_qualities = [...entry.allowed_qualities, quality];
+		} else {
+			entry.allowed_qualities = entry.allowed_qualities.filter((q: string) => q !== quality);
+		}
+	}
+
+	function toggleEntryGroup(entry: any, group: string, isChecked: boolean) {
+		if (!entry.allowed_groups) entry.allowed_groups = [];
+		if (isChecked) {
+			entry.allowed_groups = [...entry.allowed_groups, group];
+		} else {
+			entry.allowed_groups = entry.allowed_groups.filter((g: string) => g !== group);
+		}
+	}
+
 	async function loadWhitelist() {
 		try {
 			loading = true;
-			whitelist = await ipc.getWhitelist();
+			const allEntries = await ipc.getWhitelist();
+
+			// Process entries to ensure multi-select fields are arrays
+			const processedEntries = allEntries.map((entry: any) => {
+				// Parse JSON fields if they exist, otherwise create from legacy fields
+				let allowed_qualities = [];
+				let allowed_groups = [];
+
+				try {
+					allowed_qualities = entry.allowed_qualities ? JSON.parse(entry.allowed_qualities) :
+						(entry.quality && entry.quality !== 'any' ? [entry.quality] : []);
+				} catch (e) {
+					allowed_qualities = entry.quality && entry.quality !== 'any' ? [entry.quality] : [];
+				}
+
+				try {
+					allowed_groups = entry.allowed_groups ? JSON.parse(entry.allowed_groups) :
+						(entry.preferred_group && entry.preferred_group !== 'any' ? [entry.preferred_group] : []);
+				} catch (e) {
+					allowed_groups = entry.preferred_group && entry.preferred_group !== 'any' ? [entry.preferred_group] : [];
+				}
+
+				return {
+					...entry,
+					allowed_qualities,
+					allowed_groups
+				};
+			});
+
+			whitelist = processedEntries;
 
 			// Separate manual and auto-synced entries
-			manualEntries = whitelist.filter(
+			manualEntries = processedEntries.filter(
 				(entry) => entry.source_type !== 'anilist' || !entry.auto_sync
 			);
-			autoSyncedEntries = whitelist.filter(
+			autoSyncedEntries = processedEntries.filter(
 				(entry) => entry.source_type === 'anilist' && entry.auto_sync
 			);
 		} catch (error: any) {
@@ -81,12 +143,12 @@
 		try {
 			// Create a plain object to avoid Svelte reactivity issues
 			const entryData = {
-				title: newEntry.title,
-				keywords: newEntry.keywords,
-				exclude_keywords: newEntry.exclude_keywords,
-				quality: newEntry.quality,
-				group: newEntry.group,
-				enabled: newEntry.enabled
+				title: String(newEntry.title),
+				keywords: String(newEntry.keywords),
+				exclude_keywords: String(newEntry.exclude_keywords),
+				allowed_qualities: [...newEntry.allowed_qualities], // Create a new array
+				allowed_groups: [...newEntry.allowed_groups], // Create a new array
+				enabled: Boolean(newEntry.enabled)
 			};
 
 			await ipc.addWhitelistEntry(entryData);
@@ -94,8 +156,8 @@
 				title: '',
 				keywords: '',
 				exclude_keywords: '',
-				quality: '1080p',
-				group: 'any',
+				allowed_qualities: ['1080p'],
+				allowed_groups: [],
 				enabled: true
 			};
 			showAddForm = false;
@@ -117,12 +179,12 @@
 		try {
 			// Create a plain object to avoid Svelte reactivity issues
 			const entryData = {
-				title: entry.title,
-				keywords: entry.keywords,
-				exclude_keywords: entry.exclude_keywords,
-				quality: entry.quality,
-				group: entry.group || entry.preferred_group,
-				enabled: entry.enabled
+				title: String(entry.title),
+				keywords: String(entry.keywords || ''),
+				exclude_keywords: String(entry.exclude_keywords || ''),
+				allowed_qualities: entry.allowed_qualities ? [...entry.allowed_qualities] : [],
+				allowed_groups: entry.allowed_groups ? [...entry.allowed_groups] : [],
+				enabled: Boolean(entry.enabled)
 			};
 
 			await ipc.updateWhitelistEntry(id, entryData);
@@ -220,46 +282,41 @@
 					/>
 				</div>
 				<div>
-					<Label for="quality">Preferred Quality</Label>
-					<Select
-						type="single"
-						value={newEntry.quality}
-						onValueChange={(value) => (newEntry.quality = value || '1080p')}
-					>
-						<SelectTrigger class="w-full">
-							{QUALITY_OPTIONS.find((q) => q.value === newEntry.quality)?.label || 'Select quality'}
-						</SelectTrigger>
-						<SelectContent>
-							{#each QUALITY_OPTIONS as quality (quality.value)}
-								<SelectItem value={quality.value}>
+					<Label>Allowed Qualities</Label>
+					<div class="space-y-2 mt-2">
+						{#each QUALITY_OPTIONS as quality (quality.value)}
+							<div class="flex items-center space-x-2">
+								<Checkbox
+									id="quality-{quality.value}"
+									checked={newEntry.allowed_qualities.includes(quality.value)}
+									onCheckedChange={(checked) => toggleQuality(quality.value, checked)}
+								/>
+								<Label for="quality-{quality.value}" class="text-sm font-normal">
 									{quality.label}
-								</SelectItem>
-							{/each}
-						</SelectContent>
-					</Select>
+								</Label>
+							</div>
+						{/each}
+					</div>
 				</div>
 				<div>
-					<Label for="provider">Preferred Provider</Label>
-					<Select
-						type="single"
-						value={newEntry.group}
-						onValueChange={(value) => (newEntry.group = value || 'any')}
-					>
-						<SelectTrigger class="w-full">
-							{ANIME_PROVIDERS.find((p) => p.value === newEntry.group)?.label || 'Select provider'}
-						</SelectTrigger>
-						<SelectContent>
-							{#each ANIME_PROVIDERS as provider (provider.value)}
-								<SelectItem value={provider.value}>
+					<Label>Allowed Groups</Label>
+					<div class="space-y-2 mt-2">
+						{#each ANIME_PROVIDERS as provider (provider.value)}
+							<div class="flex items-center space-x-2">
+								<Checkbox
+									id="group-{provider.value}"
+									checked={newEntry.allowed_groups.includes(provider.value)}
+									onCheckedChange={(checked) => toggleGroup(provider.value, checked)}
+								/>
+								<Label for="group-{provider.value}" class="text-sm font-normal">
 									{provider.label}
-								</SelectItem>
-							{/each}
-						</SelectContent>
-					</Select>
-					<p class="mt-1 text-xs text-gray-500">
-						Choose which anime provider group you prefer. "Any Provider" will download from any
-						available source.
-					</p>
+								</Label>
+							</div>
+						{/each}
+						<p class="text-xs text-muted-foreground mt-2">
+							Leave empty to allow downloads from any group
+						</p>
+					</div>
 				</div>
 				<div class="flex gap-2">
 					<Button variant="success" onclick={addEntry}>
@@ -302,40 +359,43 @@
 										<Input bind:value={entry.title} placeholder="Title" />
 										<Input bind:value={entry.keywords} placeholder="Keywords" />
 										<Input bind:value={entry.exclude_keywords} placeholder="Exclude keywords" />
-										<Select
-											type="single"
-											value={entry.quality}
-											onValueChange={(value) => (entry.quality = value || '1080p')}
-										>
-											<SelectTrigger class="w-full">
-												{QUALITY_OPTIONS.find((q) => q.value === entry.quality)?.label ||
-													'Select quality'}
-											</SelectTrigger>
-											<SelectContent>
+										<div>
+											<Label>Allowed Qualities</Label>
+											<div class="space-y-2 mt-2">
 												{#each QUALITY_OPTIONS as quality (quality.value)}
-													<SelectItem value={quality.value}>
-														{quality.label}
-													</SelectItem>
+													<div class="flex items-center space-x-2">
+														<Checkbox
+															id="manual-quality-{entry.id}-{quality.value}"
+															checked={entry.allowed_qualities?.includes(quality.value) || false}
+															onCheckedChange={(checked) => toggleEntryQuality(entry, quality.value, checked)}
+														/>
+														<Label for="manual-quality-{entry.id}-{quality.value}" class="text-sm font-normal">
+															{quality.label}
+														</Label>
+													</div>
 												{/each}
-											</SelectContent>
-										</Select>
-										<Select
-											type="single"
-											value={entry.group}
-											onValueChange={(value) => (entry.group = value || 'any')}
-										>
-											<SelectTrigger class="w-full">
-												{ANIME_PROVIDERS.find((p) => p.value === entry.group)?.label ||
-													'Select provider'}
-											</SelectTrigger>
-											<SelectContent>
+											</div>
+										</div>
+										<div>
+											<Label>Allowed Groups</Label>
+											<div class="space-y-2 mt-2">
 												{#each ANIME_PROVIDERS as provider (provider.value)}
-													<SelectItem value={provider.value}>
-														{provider.label}
-													</SelectItem>
+													<div class="flex items-center space-x-2">
+														<Checkbox
+															id="manual-group-{entry.id}-{provider.value}"
+															checked={entry.allowed_groups?.includes(provider.value) || false}
+															onCheckedChange={(checked) => toggleEntryGroup(entry, provider.value, checked)}
+														/>
+														<Label for="manual-group-{entry.id}-{provider.value}" class="text-sm font-normal">
+															{provider.label}
+														</Label>
+													</div>
 												{/each}
-											</SelectContent>
-										</Select>
+												<p class="text-xs text-muted-foreground mt-2">
+													Leave empty to allow downloads from any group
+												</p>
+											</div>
+										</div>
 										<div class="flex gap-2">
 											<Button
 												size="sm"
@@ -371,12 +431,10 @@
 												</p>
 											{/if}
 											<p class="text-muted-foreground text-sm">
-												Quality: {entry.quality}
+												Qualities: {entry.allowed_qualities?.length > 0 ? entry.allowed_qualities.join(', ') : 'Any'}
 											</p>
 											<p class="text-muted-foreground text-sm">
-												Provider: {ANIME_PROVIDERS.find((p) => p.value === entry.group)?.label ||
-													entry.group ||
-													'Any Provider'}
+												Groups: {entry.allowed_groups?.length > 0 ? entry.allowed_groups.join(', ') : 'Any'}
 											</p>
 										</div>
 										<div class="flex items-center gap-4">
@@ -448,40 +506,43 @@
 											<Label>Exclude Keywords (Auto-synced from AniList)</Label>
 											<Input value={entry.exclude_keywords || 'None'} disabled class="bg-muted" />
 										</div>
-										<Select
-											type="single"
-											value={entry.quality}
-											onValueChange={(value) => (entry.quality = value || '1080p')}
-										>
-											<SelectTrigger class="w-full">
-												{QUALITY_OPTIONS.find((q) => q.value === entry.quality)?.label ||
-													'Select quality'}
-											</SelectTrigger>
-											<SelectContent>
+										<div>
+											<Label>Allowed Qualities</Label>
+											<div class="space-y-2 mt-2">
 												{#each QUALITY_OPTIONS as quality (quality.value)}
-													<SelectItem value={quality.value}>
-														{quality.label}
-													</SelectItem>
+													<div class="flex items-center space-x-2">
+														<Checkbox
+															id="auto-quality-{entry.id}-{quality.value}"
+															checked={entry.allowed_qualities?.includes(quality.value) || false}
+															onCheckedChange={(checked) => toggleEntryQuality(entry, quality.value, checked)}
+														/>
+														<Label for="auto-quality-{entry.id}-{quality.value}" class="text-sm font-normal">
+															{quality.label}
+														</Label>
+													</div>
 												{/each}
-											</SelectContent>
-										</Select>
-										<Select
-											type="single"
-											value={entry.group}
-											onValueChange={(value) => (entry.group = value || 'any')}
-										>
-											<SelectTrigger class="w-full">
-												{ANIME_PROVIDERS.find((p) => p.value === entry.group)?.label ||
-													'Select provider'}
-											</SelectTrigger>
-											<SelectContent>
+											</div>
+										</div>
+										<div>
+											<Label>Allowed Groups</Label>
+											<div class="space-y-2 mt-2">
 												{#each ANIME_PROVIDERS as provider (provider.value)}
-													<SelectItem value={provider.value}>
-														{provider.label}
-													</SelectItem>
+													<div class="flex items-center space-x-2">
+														<Checkbox
+															id="auto-group-{entry.id}-{provider.value}"
+															checked={entry.allowed_groups?.includes(provider.value) || false}
+															onCheckedChange={(checked) => toggleEntryGroup(entry, provider.value, checked)}
+														/>
+														<Label for="auto-group-{entry.id}-{provider.value}" class="text-sm font-normal">
+															{provider.label}
+														</Label>
+													</div>
 												{/each}
-											</SelectContent>
-										</Select>
+												<p class="text-xs text-muted-foreground mt-2">
+													Leave empty to allow downloads from any group
+												</p>
+											</div>
+										</div>
 										<div class="flex gap-2">
 											<Button
 												size="sm"
@@ -550,12 +611,10 @@
 												</div>
 											{/if}
 											<p class="text-muted-foreground text-sm">
-												Quality: {entry.quality}
+												Qualities: {entry.allowed_qualities?.length > 0 ? entry.allowed_qualities.join(', ') : 'Any'}
 											</p>
 											<p class="text-muted-foreground text-sm">
-												Provider: {ANIME_PROVIDERS.find((p) => p.value === entry.group)?.label ||
-													entry.group ||
-													'Any Provider'}
+												Groups: {entry.allowed_groups?.length > 0 ? entry.allowed_groups.join(', ') : 'Any'}
 											</p>
 										</div>
 										<div class="flex items-center gap-4">

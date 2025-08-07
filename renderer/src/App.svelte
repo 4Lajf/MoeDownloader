@@ -54,8 +54,8 @@
 
 			setLoadingMessage('Initializing database...');
 
-			// Initialize the app
-			await ipc.initializeApp();
+			// App is already initialized in main process, just wait a bit for UI
+			await new Promise(resolve => setTimeout(resolve, 100));
 
 			setLoadingMessage('Setting up services...');
 
@@ -101,13 +101,7 @@
 				console.warn('Failed to close loader window:', err);
 			}
 
-			// Show welcome notification after loading is complete
-			setTimeout(() => {
-				toast.success('MoeDownloader initialized', {
-					description: 'Application is ready to use.',
-					duration: 4000
-				});
-			}, 500);
+			// App is ready - no notification needed
 
 		} catch (err: any) {
 			console.error('Failed to initialize app:', err);
@@ -163,7 +157,7 @@
 						break;
 
 					case 'download-paused':
-						toast.warning('Download paused', {
+						toast.info('Download paused', {
 							description: `${data.title} has been paused.`,
 							duration: 3000
 						});

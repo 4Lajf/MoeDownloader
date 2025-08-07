@@ -19,7 +19,7 @@
 		maxConcurrentDownloads: 3,
 		torrentPort: 6881,
 		// RSS settings
-		rssUrl: 'https://nyaa.si/?page=rss&c=1_2&f=0',
+		rssUrl: 'https://www.tokyotosho.info/rss.php?filter=1&entries=750',
 		checkInterval: 5,
 		enableAutoStart: false,
 		// Download filtering settings
@@ -340,22 +340,6 @@
 						<h4 class="font-medium mb-3">RSS Settings</h4>
 						<div class="space-y-4">
 							<div>
-								<Label for="rssUrl" class="py-2">RSS Feed URL</Label>
-								<div class="flex gap-2">
-									<Input
-										id="rssUrl"
-										bind:value={settings.rssUrl}
-										placeholder="https://example.com/rss.xml"
-										type="url"
-										oninput={autoSaveSettings}
-									/>
-									<Button variant="outline-info" onclick={testRSSFeed}>
-										<RefreshCw class="w-4 h-4" />
-									</Button>
-								</div>
-							</div>
-
-							<div>
 								<Label for="checkInterval" class="py-2">Check Interval (minutes)</Label>
 								<Input
 									id="checkInterval"
@@ -607,6 +591,36 @@
 					</div>
 				</CardContent>
 			</Card>
+
+			<!-- RSS Feed Configuration (Developer Only) -->
+			{#if settings.showAdvancedTabsInSidebar}
+				<Card>
+					<CardHeader>
+						<CardTitle>RSS Feed Configuration</CardTitle>
+						<CardDescription>Configure RSS feed sources</CardDescription>
+					</CardHeader>
+					<CardContent class="space-y-4">
+						<div>
+							<Label for="rssUrl" class="py-2">RSS Feed URL</Label>
+							<div class="flex gap-2">
+								<Input
+									id="rssUrl"
+									bind:value={settings.rssUrl}
+									placeholder="https://example.com/rss.xml"
+									type="url"
+									oninput={autoSaveSettings}
+								/>
+								<Button variant="outline-info" onclick={testRSSFeed}>
+									<RefreshCw class="w-4 h-4" />
+								</Button>
+							</div>
+							<p class="text-xs text-muted-foreground mt-2">
+								Supports both Nyaa.si and Tokyo Toshokan RSS feeds. Default: Tokyo Toshokan with 750 entries.
+							</p>
+						</div>
+					</CardContent>
+				</Card>
+			{/if}
 
 			<!-- Advanced Tools -->
 			<Card>
