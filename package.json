@@ -1,7 +1,7 @@
 {
   "name": "moe-downloader",
   "version": "1.0.0",
-  "description": "",
+  "description": "MoeDownloader is an anime download manager that monitors RSS feeds, matches whitelist rules, and downloads episodes automatically.",
   "main": "dist/electron/app.js",
   "scripts": {
     "dev": "concurrently --kill-others \"npm run dev:renderer\" \"npm run dev:electron\" \"cd electron && tsc -w\" \"node scripts/watch-js-files.js\"",
@@ -45,7 +45,7 @@
     "url": "git+https://github.com/tlaceby/electron-svelte.git"
   },
   "keywords": [],
-  "author": "",
+  "author": "MoeDownloader",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/tlaceby/electron-svelte/issues"
