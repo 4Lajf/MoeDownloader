@@ -15,6 +15,9 @@ jobs:
           name: Install dependencies
           command: npm ci
       - run:
+          name: Install renderer dependencies
+          command: npm ci --prefix renderer
+      - run:
           name: Generate Builds (Windows)
           command: npm run make
       - store_artifacts:

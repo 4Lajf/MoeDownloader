@@ -12,6 +12,8 @@ jobs:
           command: "sudo npm install -g npm"
       - restore_cache:
           key: dependency-cache-{{ checksum "package-lock.json" }}
+      - restore_cache:
+          key: renderer-dependency-cache-{{ checksum "renderer/package-lock.json" }}
       - run:
           name: Install system dependencies (dpkg, fakeroot)
           command: |
@@ -20,10 +22,17 @@ jobs:
       - run:
           name: Install project dependencies
           command: npm ci
+      - run:
+          name: Install renderer dependencies
+          command: npm ci --prefix renderer
       - save_cache:
           key: dependency-cache-{{ checksum "package-lock.json" }}
           paths:
             - ./node_modules
+      - save_cache:
+          key: renderer-dependency-cache-{{ checksum "renderer/package-lock.json" }}
+          paths:
+            - ./renderer/node_modules
       - run:
           name: Generate Builds (Linux)
           command: npm run make
