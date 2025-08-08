@@ -1,12 +1,28 @@
+version: 2.1
+
 jobs:
   build-windows:
     machine:
       image: 'windows-server-2019-vs2019:stable'
+      resource_class: windows.medium
     working_directory: ~/project
     steps:
       - checkout
-      - run: npm -g install npm
-      - run: npm ci
-      - run: npm run make
+      - run:
+          name: Use latest npm
+          command: npm -g install npm
+      - run:
+          name: Install dependencies
+          command: npm ci
+      - run:
+          name: Generate Builds (Windows)
+          command: npm run make
       - store_artifacts:
           path: out/make
+
+workflows:
+  windows_build:
+    jobs:
+      - build-windows
+
+

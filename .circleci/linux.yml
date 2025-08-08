@@ -1,6 +1,7 @@
 version: 2.1
+
 jobs:
-  build:
+  build-linux:
     working_directory: ~/repo
     docker:
       - image: cimg/node:current
@@ -10,24 +11,28 @@ jobs:
           name: Update NPM
           command: "sudo npm install -g npm"
       - restore_cache:
-          key: dependency-cache-{{ checksum "package.json" }}
+          key: dependency-cache-{{ checksum "package-lock.json" }}
       - run:
-          name: Install Dependencies
-          command: npm install
-      - run:
-          name: Install dpkg and fakeroot
+          name: Install system dependencies (dpkg, fakeroot)
           command: |
             sudo apt-get update -y
-            sudo apt-get install -y dpkg fakeroot rpm
-
+            sudo apt-get install -y dpkg fakeroot
+      - run:
+          name: Install project dependencies
+          command: npm ci
       - save_cache:
-          key: dependency-cache-{{ checksum "package.json" }}
+          key: dependency-cache-{{ checksum "package-lock.json" }}
           paths:
             - ./node_modules
       - run:
-          name: Generate Builds
+          name: Generate Builds (Linux)
           command: npm run make
-
       - store_artifacts:
-          path: ~/repo/out/make
+          path: out/make
+
+workflows:
+  linux_build:
+    jobs:
+      - build-linux
+
 
