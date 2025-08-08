@@ -13,7 +13,6 @@
     "copy-js": "node scripts/copy-js-files.js",
     "format": "prettier --write .",
     "start": "electron-forge start",
-    "postinstall": "npm install --prefix renderer",
     "premake": "npm run build:renderer && npm run build:electron",
     "make": "npm run premake && electron-forge make"
   },
