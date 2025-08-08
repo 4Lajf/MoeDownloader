@@ -5,13 +5,17 @@
   "main": "dist/electron/app.js",
   "scripts": {
     "dev": "concurrently --kill-others \"npm run dev:renderer\" \"npm run dev:electron\" \"cd electron && tsc -w\" \"node scripts/watch-js-files.js\"",
-    "package": "npm run build:renderer && npm run build:electron && electron-builder",
+    "package": "electron-forge package",
     "build:electron": "cd electron && tsc && cd .. && node scripts/copy-js-files.js",
     "build:renderer": "cd renderer && npm run build",
     "dev:renderer": "cd renderer && npm run dev",
     "dev:electron": "npm run build:electron && electron .",
     "copy-js": "node scripts/copy-js-files.js",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "start": "electron-forge start",
+    "postinstall": "npm install --prefix renderer",
+    "premake": "npm run build:renderer && npm run build:electron",
+    "make": "npm run premake && electron-forge make"
   },
   "build": {
     "appId": "com.moedownloader.app",
@@ -48,10 +52,17 @@
   },
   "homepage": "https://github.com/tlaceby/electron-svelte#readme",
   "devDependencies": {
+    "@electron-forge/cli": "^7.8.3",
+    "@electron-forge/maker-deb": "^7.8.3",
+    "@electron-forge/maker-rpm": "^7.8.3",
+    "@electron-forge/maker-squirrel": "^7.8.3",
+    "@electron-forge/maker-zip": "^7.8.3",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.8.3",
+    "@electron-forge/plugin-fuses": "^7.8.3",
+    "@electron/fuses": "^1.8.0",
     "@types/better-sqlite3": "^7.6.13",
     "concurrently": "^8.2.2",
     "electron": "^28.2.3",
-    "electron-builder": "^24.9.1",
     "prettier": "^3.2.5",
     "prettier-plugin-svelte": "^3.2.1"
   },
@@ -60,6 +71,7 @@
     "axios": "^1.11.0",
     "better-sqlite3": "^12.2.0",
     "electron-reload": "^2.0.0-alpha.1",
+    "electron-squirrel-startup": "^1.0.1",
     "node-cron": "^4.2.1",
     "webtorrent": "^2.6.10",
     "xml2js": "^0.6.2"
