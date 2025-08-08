@@ -36,8 +36,11 @@ let anilistSyncService: any;
 let activityLogger: any;
 let sharedTitleOverridesManager: any;
 
-// Set app name for notifications and system integration
+// Set app name and AppUserModelID for notifications, Start menu, and process display
 app.setName('MoeDownloader');
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.4Lajf.MoeDownloader');
+}
 
 app.once("ready", () => {
   // Create and show loader window immediately

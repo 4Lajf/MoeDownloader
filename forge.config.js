@@ -4,12 +4,22 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 module.exports = {
   packagerConfig: {
     asar: true,
+    // Root-level icon without extension; Forge appends .ico/.icns as needed
+    icon: './icon',
+    executableName: 'MoeDownloader',
+    win32metadata: {
+      CompanyName: '4Lajf',
+      FileDescription: 'MoeDownloader',
+      ProductName: 'MoeDownloader',
+    },
   },
   rebuildConfig: {},
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      config: {},
+      config: {
+        setupIcon: './icon.ico',
+      },
     },
     {
       name: '@electron-forge/maker-zip',
@@ -17,7 +27,11 @@ module.exports = {
     },
     {
       name: '@electron-forge/maker-deb',
-      config: {},
+      config: {
+        options: {
+          icon: './icon.png',
+        },
+      },
     },
   ],
   plugins: [
