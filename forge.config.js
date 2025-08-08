@@ -13,7 +13,7 @@ module.exports = {
     },
     {
       name: '@electron-forge/maker-zip',
-      platforms: ['linux'],
+      platforms: ['linux', 'win32'],
     },
     {
       name: '@electron-forge/maker-deb',

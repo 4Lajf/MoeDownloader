@@ -1,0 +1,12 @@
+jobs:
+  build-windows:
+    machine:
+      image: 'windows-server-2019-vs2019:stable'
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run: npm -g install npm
+      - run: npm ci
+      - run: npm run make
+      - store_artifacts:
+          path: out/make
