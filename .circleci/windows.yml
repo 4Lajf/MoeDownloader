@@ -9,8 +9,8 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Use latest npm
-          command: npm -g install npm
+          name: Pin npm to v10 (compatible with Node v20.11 on CircleCI Windows image)
+          command: npm -g install npm@10
       - run:
           name: Install dependencies
           command: npm ci
